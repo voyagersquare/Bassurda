@@ -2,8 +2,13 @@ name: Build Windows VST3
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish releases for version tags
 
 jobs:
   windows-vst3:
@@ -27,3 +32,26 @@ jobs:
           name: Bassurda-Windows-VST3
           path: build/Bassurda_artefacts/Release/VST3
           if-no-files-found: error
+
+      # On a version tag (e.g. v0.1.0): zip the plugin and publish a GitHub
+      # Release. The newest one is always at
+      # https://github.com/voyagersquare/Bassurda/releases/latest/download/Bassurda-Windows-VST3.zip
+      - name: Zip VST3
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: Compress-Archive -Path build/Bassurda_artefacts/Release/VST3/Bassurda.vst3 -DestinationPath Bassurda-Windows-VST3.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Bassurda - hip-hop / trap / drill bass synth (Windows VST3, 64-bit).
+
+          **Instalacija:** raspakiraj zip i kopiraj mapu `Bassurda.vst3` u
+          `C:\Program Files\Common Files\VST3`, zatim u DAW-u ponovno skeniraj pluginove.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" Bassurda-Windows-VST3.zip \
+            --title "Bassurda $GITHUB_REF_NAME" --notes-file notes.md --target "$GITHUB_SHA"

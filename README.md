@@ -59,11 +59,14 @@ Sub ─────────────────────► Amp ADSR 
 
 Nazivi nota koriste konvenciju **C3 = srednji C (MIDI 60)**, kao Ableton i Logic.
 
-## Gotov plugin (bez buildanja)
+## Skidanje
 
-Na svaki push GitHub Actions builda Windows VST3 i pokrene testove.
-Na GitHubu otvori **Actions → Build Windows VST3 → zadnji run** i skini artefakt **Bassurda-Windows-VST3**.
-Raspakiraj ga i kopiraj mapu `Bassurda.vst3` u `C:\Program Files\Common Files\VST3`, pa u DAW-u ponovno skeniraj pluginove.
+**[⬇ Bassurda-Windows-VST3.zip (najnovija verzija)](https://github.com/voyagersquare/Bassurda/releases/latest/download/Bassurda-Windows-VST3.zip)**
+
+Raspakiraj zip i kopiraj mapu `Bassurda.vst3` u `C:\Program Files\Common Files\VST3`, pa u DAW-u ponovno skeniraj pluginove.
+
+Nova verzija se objavljuje tagom: `git tag v0.2.0` pa `git push origin v0.2.0`. GitHub Actions tada builda plugin,
+pokrene testove i objavi Release; gornji link uvijek vodi na najnoviju verziju.
 
 ## Build na svom računalu
 
