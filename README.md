@@ -1,6 +1,6 @@
 # Bassurda
 
-**Monofoni synth bass plugin za hip-hop, trap, drill i G-funk** (VST3 / AU / Standalone, JUCE, C++17).
+**Monofoni synth bass plugin za hip-hop, trap, drill i G-funk** (Windows VST3, JUCE, C++17).
 
 Bassurda je napravljen da bas zvuči masivno na klupskom razglasu, a i dalje jasno na zvučniku mobitela:
 čisti, fazno poravnati sub ispod, saturacija koja dodaje harmonike iznad, i precizna kontrola udarca i klizanja.
@@ -59,30 +59,28 @@ Sub ─────────────────────► Amp ADSR 
 
 Nazivi nota koriste konvenciju **C3 = srednji C (MIDI 60)**, kao Ableton i Logic.
 
-## Build
+## Gotov plugin (bez buildanja)
 
-Treba: CMake ≥ 3.22 i C++17 kompajler (Visual Studio 2022, Xcode, GCC/Clang). JUCE 7 se skida automatski.
+Na svaki push GitHub Actions builda Windows VST3 i pokrene testove.
+Na GitHubu otvori **Actions → Build Windows VST3 → zadnji run** i skini artefakt **Bassurda-Windows-VST3**.
+Raspakiraj ga i kopiraj mapu `Bassurda.vst3` u `C:\Program Files\Common Files\VST3`, pa u DAW-u ponovno skeniraj pluginove.
+
+## Build na svom računalu
+
+Treba: Windows, [Visual Studio 2022](https://visualstudio.microsoft.com/) (radno opterećenje "Desktop development with C++")
+i CMake ≥ 3.22. JUCE 7 se skida automatski.
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build
 ```
 
 ```bash
-cmake --build build --config Release --parallel
+cmake --build build --config Release --target Bassurda_VST3
 ```
 
-Rezultat je u `build/Bassurda_artefacts/Release/` (`VST3/`, `AU/` na macOS-u, `Standalone/`).
-Kopiraj `Bassurda.vst3` u:
-- Windows: `C:\Program Files\Common Files\VST3`
-- macOS: `~/Library/Audio/Plug-Ins/VST3` (AU: `~/Library/Audio/Plug-Ins/Components`)
-- Linux: `~/.vst3`
+Rezultat: `build\Bassurda_artefacts\Release\VST3\Bassurda.vst3` → kopiraj u `C:\Program Files\Common Files\VST3`.
 
-Na Linuxu prvo instaliraj: `libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev`.
-
-Lokalni JUCE checkout se može koristiti s `-DJUCE_DIR=/put/do/JUCE`.
-
-GitHub Actions (`.github/workflows/build.yml`) builda Windows, macOS (universal) i Linux verziju na svaki push i
-sprema gotove pluginove kao artefakte.
+Lokalni JUCE checkout se može koristiti s `-DJUCE_DIR=C:/put/do/JUCE`.
 
 ## Testovi
 

@@ -5,11 +5,6 @@ project(Bassurda VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures")
-endif()
-
 # ---------------------------------------------------------------------------
 # JUCE: use a local checkout if JUCE_DIR is given, otherwise download it.
 # JUCE 7 is licensed under GPLv3, which matches this project's license.
@@ -29,10 +24,8 @@ endif()
 
 option(BASSURDA_BUILD_TESTS "Build the offline DSP test runner" ON)
 
-set(BASSURDA_FORMATS VST3 Standalone)
-if(APPLE)
-    list(APPEND BASSURDA_FORMATS AU)
-endif()
+# Target: Windows VST3.
+set(BASSURDA_FORMATS VST3)
 
 juce_add_plugin(Bassurda
     COMPANY_NAME                "VoyagerSquare"
@@ -47,7 +40,6 @@ juce_add_plugin(Bassurda
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD     FALSE
     VST3_CATEGORIES             Instrument Synth
-    AU_MAIN_TYPE                kAudioUnitType_MusicDevice
     PRODUCT_NAME                "Bassurda"
     FORMATS                     ${BASSURDA_FORMATS})
 
