@@ -14,6 +14,7 @@ namespace bdsp
         osc2Gain.prepare (sr, 15.0f);
         subGain.prepare (sr, 15.0f);
         driveSmooth.prepare (sr, 15.0f);
+        smpGain.prepare (sr, 15.0f);
 
         declickCoef = std::exp (-1.0f / (float) (0.0015 * sr));   // ~1.5 ms
         reset();
@@ -24,6 +25,7 @@ namespace bdsp
         osc2Gain.snap (params.osc2.on ? params.osc2.level : 0.0f);
         subGain.snap (params.subLevel);
         driveSmooth.snap (params.fltDrive);
+        smpGain.snap (params.smpOn ? params.smpLevel : 0.0f);
     }
 
     void BassEngine::reset()
@@ -61,6 +63,7 @@ namespace bdsp
         osc2Gain.setTarget (p.osc2.on ? p.osc2.level : 0.0f);
         subGain.setTarget (p.subLevel);
         driveSmooth.setTarget (p.fltDrive);
+        smpGain.setTarget (p.smpOn ? p.smpLevel : 0.0f);
 
         bendSemis = (float) (bendRaw - 8192) / 8192.0f * (float) p.bendRange;
     }
@@ -181,6 +184,9 @@ namespace bdsp
         if (params.phaseRetrig)
             resetPhases();
 
+        // one-shot sample always restarts on a new (non-legato) note
+        samplePos = sample != nullptr ? params.smpStart * (double) sample->length() : 0.0;
+
         if (params.lfoRetrig)
             lfoPhase = 0.0;
 
@@ -249,6 +255,7 @@ namespace bdsp
             osc2Gain.snap (osc2Gain.target);
             subGain.snap (subGain.target);
             driveSmooth.snap (driveSmooth.target);
+            smpGain.snap (smpGain.target);
             return;
         }
 
@@ -363,8 +370,28 @@ namespace bdsp
             }
             subSig *= gs;
 
+            // ---- sample oscillator (follows glide, bend, LFO) ----------------
+            float smp = 0.0f;
+            const float gsm = smpGain.next();
+            if (sample != nullptr && sample->length() > 0)
+            {
+                const double pitch = basePitch + (params.smpPenv ? pe : 0.0f)
+                                     - (double) params.smpRoot - params.smpTune * 0.01;
+                const double inc = std::exp2 (pitch / 12.0) * sample->sampleRate / sr;
+                const double len = (double) sample->length();
+                if (params.smpLoop && samplePos >= len)
+                {
+                    const double loopStart = params.smpStart * len;
+                    samplePos = loopStart + std::fmod (samplePos - loopStart, std::max (1.0, len - loopStart));
+                }
+                if (gsm > 1.0e-5f)
+                    smp = sample->read (samplePos) * gsm;
+                if (samplePos < len)
+                    samplePos += inc;
+            }
+
             // ---- filter --------------------------------------------------
-            float x = oscA * g1 + oscB * g2 + (params.subClean ? 0.0f : subSig);
+            float x = oscA * g1 + oscB * g2 + smp + (params.subClean ? 0.0f : subSig);
 
             const float drive = driveSmooth.next();
             if (drive > 0.001f)

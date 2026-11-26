@@ -176,6 +176,34 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<APF> (pid (satTone), "Saturation Tone", toneRange, 9000.0f, hzAttr()));
     layout.add (std::make_unique<APF> (pid (satMix), "Saturation Mix", Range { 0.0f, 1.0f }, 1.0f, percentAttr()));
 
+    layout.add (std::make_unique<APC> (pid (satBand), "Saturation Band", ParamChoices::satBand, 0));
+    Range xoverRange { 40.0f, 400.0f };
+    xoverRange.setSkewForCentre (120.0f);
+    layout.add (std::make_unique<APF> (pid (satXover), "Saturation Crossover", xoverRange, 120.0f, hzAttr()));
+
+    // ---- Sample oscillator --------------------------------------------------
+    auto noteAttr = juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int)
+    {
+        return juce::MidiMessage::getMidiNoteName (v, true, true, 3);
+    });
+    layout.add (std::make_unique<APB> (pid (smpOn), "Sample On", false));
+    layout.add (std::make_unique<APF> (pid (smpLevel), "Sample Level", Range { 0.0f, 1.0f }, 0.8f, percentAttr()));
+    layout.add (std::make_unique<API> (pid (smpRoot), "Sample Root Note", 0, 127, 36, noteAttr));
+    layout.add (std::make_unique<APF> (pid (smpTune), "Sample Tune", Range { -100.0f, 100.0f }, 0.0f,
+                                       juce::AudioParameterFloatAttributes().withLabel ("ct")
+                                           .withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1) + " ct"; })));
+    layout.add (std::make_unique<APF> (pid (smpStart), "Sample Start", Range { 0.0f, 0.5f }, 0.0f, percentAttr()));
+    layout.add (std::make_unique<APB> (pid (smpLoop), "Sample Loop", false));
+    layout.add (std::make_unique<APB> (pid (smpPenv), "Sample Pitch Env", false));
+
+    // ---- Kick duck ----------------------------------------------------------
+    layout.add (std::make_unique<APC> (pid (duckMode), "Duck Mode", ParamChoices::duckMode, 0));
+    layout.add (std::make_unique<API> (pid (duckNote), "Duck Trigger Note", 0, 127, 12, noteAttr));
+    layout.add (std::make_unique<APF> (pid (duckDepth), "Duck Depth", Range { 0.0f, 1.0f }, 0.8f, percentAttr()));
+    layout.add (std::make_unique<APF> (pid (duckAttack), "Duck Attack", timeRange (0.1f, 30.0f, 3.0f), 1.0f, msAttr()));
+    layout.add (std::make_unique<APF> (pid (duckHold), "Duck Hold", timeRange (0.0f, 300.0f, 40.0f), 20.0f, msAttr()));
+    layout.add (std::make_unique<APF> (pid (duckRelease), "Duck Release", timeRange (5.0f, 1000.0f, 150.0f), 120.0f, msAttr()));
+
     // ---- Output -------------------------------------------------------------
     layout.add (std::make_unique<APF> (pid (outGain), "Output Gain", Range { -24.0f, 12.0f }, -3.0f,
                                        juce::AudioParameterFloatAttributes().withLabel ("dB")

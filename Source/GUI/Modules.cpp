@@ -7,14 +7,17 @@ namespace C = Colours_;
 using LAF = BassurdaLookAndFeel;
 
 //==============================================================================
-Knob::Knob (APVTS& state, const String& paramId, String displayName, Colour accent)
-    : name (std::move (displayName)), attachment (state, paramId, slider)
+Knob::Knob (APVTS& state, const String& id, String displayName, Colour accent)
+    : name (std::move (displayName)), paramId (id),
+      proc (dynamic_cast<BassurdaProcessor*> (&state.processor)),
+      attachment (state, id, slider)
 {
+    const auto& paramId_ = id;
     slider.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (Slider::NoTextBox, false, 0, 0);
     slider.setRotaryParameters (MathConstants<float>::pi * 1.25f, MathConstants<float>::pi * 2.75f, true);
     slider.setDoubleClickReturnValue (true, slider.getDoubleClickReturnValue());
-    if (auto* p = state.getParameter (paramId))
+    if (auto* p = state.getParameter (paramId_))
         slider.setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));
     slider.setMouseDragSensitivity (220);
     slider.setVelocityBasedMode (false);
@@ -23,7 +26,49 @@ Knob::Knob (APVTS& state, const String& paramId, String displayName, Colour acce
     slider.addMouseListener (this, false);
     slider.onValueChange = [this] { repaint(); };
     slider.setPopupMenuEnabled (false);
+    slider.onRightClick = [this] { showMenu(); };
     addAndMakeVisible (slider);
+}
+
+void Knob::showMenu()
+{
+    if (proc == nullptr)
+        return;
+
+    PopupMenu m;
+    const int cc = proc->getMidiCCFor (paramId);
+    m.addSectionHeader (name + (cc >= 0 ? "  (CC " + String (cc) + ")" : String()));
+    if (proc->isLearning (paramId))
+        m.addItem (1, "Cancel MIDI Learn");
+    else
+        m.addItem (2, "MIDI Learn (move a controller)");
+    m.addItem (3, "Clear MIDI CC", cc >= 0);
+    m.addSeparator();
+    m.addItem (4, "Reset to default");
+
+    SafePointer<Knob> safe (this);
+    m.showMenuAsync (PopupMenu::Options().withTargetComponent (this), [safe] (int result)
+    {
+        if (safe == nullptr) return;
+        auto* p = safe->proc;
+        switch (result)
+        {
+            case 1: p->cancelMidiLearn(); break;
+            case 2: p->startMidiLearn (safe->paramId); safe->startTimerHz (8); break;
+            case 3: p->clearMidiMapping (safe->paramId); break;
+            case 4: safe->slider.setValue (safe->slider.getDoubleClickReturnValue(), sendNotificationSync); break;
+            default: break;
+        }
+        safe->repaint();
+    });
+}
+
+void Knob::timerCallback()
+{
+    ++blink;
+    if (proc == nullptr || ! proc->isLearning (paramId))
+        stopTimer();
+    repaint();
 }
 
 void Knob::resized()
@@ -38,7 +83,26 @@ void Knob::paint (Graphics& g)
 {
     auto label = getLocalBounds().removeFromBottom (15).toFloat();
     const bool showValue = slider.isMouseOverOrDragging();
-    if (showValue)
+    const bool learning = proc != nullptr && isTimerRunning() && proc->isLearning (paramId);
+    const int cc = proc != nullptr ? proc->getMidiCCFor (paramId) : -1;
+
+    if (cc >= 0)
+    {
+        g.setFont (LAF::labelFont (8.5f));
+        g.setColour (C::orange.darker (0.2f));
+        g.drawText ("CC" + String (cc), getLocalBounds().removeFromTop (11).toFloat(), Justification::topRight, false);
+    }
+
+    if (learning)
+    {
+        auto box = label.withSizeKeepingCentre (jmin (label.getWidth(), 78.0f), 13.0f);
+        g.setColour ((blink & 1) ? C::orange : C::orange.withAlpha (0.4f));
+        g.fillRoundedRectangle (box, 2.0f);
+        g.setColour (C::lcdBg);
+        g.setFont (LAF::labelFont (10.0f));
+        g.drawText ("LEARN", box, Justification::centred, false);
+    }
+    else if (showValue)
     {
         auto box = label.withSizeKeepingCentre (jmin (label.getWidth(), 78.0f), 13.0f);
         g.setColour (C::lcdBg);
@@ -357,12 +421,16 @@ void LfoModule::resized()
 SaturationModule::SaturationModule (BassurdaProcessor& p)
     : ModulePanel ("SATURATION"), display (p),
       type (p.apvts, satType, { "WARM", "TAPE", "HARD", "FOLD" }),
+      band (p.apvts, satBand, { "FULL", "HIGHS" }),
       drive (p.apvts, satDrive, "DRIVE", C::red),
       tone (p.apvts, satTone, "TONE", C::orange),
-      mix (p.apvts, satMix, "MIX", C::orange)
+      mix (p.apvts, satMix, "MIX", C::orange),
+      xover (p.apvts, satXover, "X-OVER", C::green)
 {
-    for (auto* c : { (Component*) &display, (Component*) &type, (Component*) &drive, (Component*) &tone, (Component*) &mix })
+    for (auto* c : { (Component*) &display, (Component*) &type, (Component*) &band, (Component*) &drive,
+                     (Component*) &tone, (Component*) &mix, (Component*) &xover })
         addAndMakeVisible (c);
+    band.setTooltip ("HIGHS: saturate only above the crossover, the low end stays clean");
 }
 
 void SaturationModule::resized()
@@ -370,9 +438,95 @@ void SaturationModule::resized()
     auto r = content();
     display.setBounds (r.removeFromTop (62));
     r.removeFromTop (5);
-    type.setBounds (r.removeFromTop (22));
+    auto row = r.removeFromTop (22);
+    band.setBounds (row.removeFromRight (row.getWidth() / 3).withTrimmedLeft (8));
+    type.setBounds (row);
     r.removeFromTop (3);
-    layoutRow (r, { &drive, &tone, &mix });
+    layoutRow (r, { &drive, &tone, &mix, &xover });
+}
+
+//==============================================================================
+SampleModule::SampleModule (BassurdaProcessor& p)
+    : ModulePanel ("SAMPLE OSC"), proc (p), display (p),
+      on (p.apvts, smpOn, "ON", C::cyan),
+      loop (p.apvts, smpLoop, "LOOP", C::cyan),
+      penv (p.apvts, smpPenv, "P.ENV", C::orange),
+      level (p.apvts, smpLevel, "LEVEL"),
+      root (p.apvts, smpRoot, "ROOT", C::orange),
+      tune (p.apvts, smpTune, "TUNE", C::orange),
+      start (p.apvts, smpStart, "START", C::orange)
+{
+    for (auto* c : { (Component*) &display, (Component*) &loadButton, (Component*) &clearButton, (Component*) &on,
+                     (Component*) &loop, (Component*) &penv, (Component*) &level, (Component*) &root,
+                     (Component*) &tune, (Component*) &start })
+        addAndMakeVisible (c);
+
+    loadButton.setTooltip ("Load a one-shot (WAV/AIFF/FLAC). The root note is detected automatically.");
+    penv.setTooltip ("Apply the pitch envelope to the sample too");
+    loadButton.onClick = [this]
+    {
+        chooser = std::make_unique<FileChooser> ("Load an 808 / bass sample", File(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+        chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles,
+                              [this] (const FileChooser& fc)
+                              {
+                                  if (fc.getResult().existsAsFile())
+                                      proc.loadSample (fc.getResult());
+                              });
+    };
+    clearButton.onClick = [this] { proc.clearSample(); };
+}
+
+void SampleModule::resized()
+{
+    auto t = titleBar();
+    on.setBounds (t.removeFromRight (52));
+
+    auto r = content();
+    auto left = r.removeFromLeft (r.getWidth() * 55 / 100);
+    display.setBounds (left.removeFromTop (100));
+    left.removeFromTop (6);
+    auto row = left.removeFromTop (24);
+    const int w = row.getWidth() / 4;
+    loadButton.setBounds (row.removeFromLeft (w).reduced (2, 0));
+    clearButton.setBounds (row.removeFromLeft (w).reduced (2, 0));
+    loop.setBounds (row.removeFromLeft (w).reduced (2, 0));
+    penv.setBounds (row.reduced (2, 0));
+
+    r.removeFromLeft (6);
+    auto top = r.removeFromTop (r.getHeight() / 2);
+    layoutRow (top, { &level, &root });
+    layoutRow (r, { &tune, &start });
+}
+
+//==============================================================================
+DuckModule::DuckModule (BassurdaProcessor& p)
+    : ModulePanel ("KICK DUCK"), display (p),
+      mode (p.apvts, duckMode, { "OFF", "NOTE", "CH 10", "BEAT" }),
+      note (p.apvts, duckNote, "NOTE", C::red),
+      depth (p.apvts, duckDepth, "DEPTH", C::red),
+      attack (p.apvts, duckAttack, "ATTACK", C::red),
+      hold (p.apvts, duckHold, "HOLD", C::red),
+      release (p.apvts, duckRelease, "RELEASE", C::red)
+{
+    for (auto* c : { (Component*) &display, (Component*) &mode, (Component*) &note, (Component*) &depth,
+                     (Component*) &attack, (Component*) &hold, (Component*) &release })
+        addAndMakeVisible (c);
+    mode.setTooltip ("NOTE: the chosen MIDI note ducks the bass (and is not played). "
+                     "CH 10: any note on MIDI channel 10. BEAT: every beat of the host tempo.");
+}
+
+void DuckModule::resized()
+{
+    auto r = content();
+    auto left = r.removeFromLeft (r.getWidth() * 42 / 100);
+    display.setBounds (left.removeFromTop (100));
+    left.removeFromTop (6);
+    mode.setBounds (left.removeFromTop (24));
+
+    r.removeFromLeft (6);
+    auto top = r.removeFromTop (r.getHeight() / 2);
+    layoutRow (top, { &note, &depth, &attack });
+    layoutRow (r, { &hold, &release });
 }
 
 //==============================================================================

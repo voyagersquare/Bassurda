@@ -4,6 +4,7 @@
 #include <atomic>
 #include "DspUtils.h"
 #include "Envelope.h"
+#include "SampleData.h"
 
 namespace bdsp
 {
@@ -51,6 +52,13 @@ namespace bdsp
         int   lfoShape = 0;
         float lfoToCutoff = 0.0f, lfoToPitch = 0.0f;
         bool  lfoRetrig = true;
+
+        // sample oscillator
+        bool  smpOn = false;
+        float smpLevel = 0.8f;
+        int   smpRoot = 36;
+        float smpTune = 0.0f, smpStart = 0.0f;
+        bool  smpLoop = false, smpPenv = false;
     };
 
     // Monophonic bass voice with a note stack, glide, phase reset and a
@@ -67,6 +75,10 @@ namespace bdsp
         void noteOff (int note);
         void allNotesOff (bool hardStop);
         void pitchBend (int value14bit);
+
+        // The sample is owned by the processor; it guarantees the pointer
+        // stays valid for the duration of render().
+        void setSample (const SampleData* s) noexcept { sample = s; }
 
         // Renders the voice. `main` receives everything that goes to the
         // saturation stage; `sub` receives the clean sub (zeros if the sub
@@ -121,6 +133,11 @@ namespace bdsp
         // click transient
         float clickEnv = 0.0f, clickCoef = 0.0f, clickLp = 0.0f, clickHpState = 0.0f;
         Noise noise, clickNoise;
+
+        // sample oscillator
+        const SampleData* sample = nullptr;
+        double samplePos = 0.0;
+        Smoother smpGain;
 
         // filter
         Svf svf1, svf2;

@@ -83,6 +83,25 @@ namespace ParamID
     inline constexpr const char* satDrive = "sat_drive";
     inline constexpr const char* satTone  = "sat_tone";
     inline constexpr const char* satMix   = "sat_mix";
+    inline constexpr const char* satBand  = "sat_band";      // Full, Highs (multiband)
+    inline constexpr const char* satXover = "sat_xover";     // crossover for "Highs"
+
+    // Sample oscillator (load your own 808 / bass one-shot)
+    inline constexpr const char* smpOn    = "smp_on";
+    inline constexpr const char* smpLevel = "smp_level";
+    inline constexpr const char* smpRoot  = "smp_root";
+    inline constexpr const char* smpTune  = "smp_tune";
+    inline constexpr const char* smpStart = "smp_start";
+    inline constexpr const char* smpLoop  = "smp_loop";
+    inline constexpr const char* smpPenv  = "smp_penv";
+
+    // Kick duck (MIDI / beat triggered ducking)
+    inline constexpr const char* duckMode    = "duck_mode";  // Off, Note, Ch 10, Beat
+    inline constexpr const char* duckNote    = "duck_note";
+    inline constexpr const char* duckDepth   = "duck_depth";
+    inline constexpr const char* duckAttack  = "duck_atk";
+    inline constexpr const char* duckHold    = "duck_hold";
+    inline constexpr const char* duckRelease = "duck_rel";
 
     // Output
     inline constexpr const char* outGain   = "out_gain";
@@ -103,6 +122,8 @@ namespace ParamChoices
     inline const juce::StringArray lfoShape   { "Sine", "Triangle", "Saw", "Square", "S&H" };
     inline const juce::StringArray satType    { "Warm", "Tape", "Hard", "Fold" };
     inline const juce::StringArray lowCut     { "Off", "20 Hz", "30 Hz", "40 Hz" };
+    inline const juce::StringArray satBand    { "Full", "Highs" };
+    inline const juce::StringArray duckMode   { "Off", "Note", "Ch 10", "Beat" };
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

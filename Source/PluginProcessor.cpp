@@ -46,6 +46,12 @@ struct BassurdaProcessor::Raw
 
     BASSURDA_RAW (satType_, satType) BASSURDA_RAW (satDrive_, satDrive) BASSURDA_RAW (satTone_, satTone) BASSURDA_RAW (satMix_, satMix)
     BASSURDA_RAW (outGain_, outGain) BASSURDA_RAW (outClip_, outClip) BASSURDA_RAW (lowCut_, monoCut)
+    BASSURDA_RAW (satBand_, satBand) BASSURDA_RAW (satXover_, satXover)
+    BASSURDA_RAW (smpOn_, smpOn) BASSURDA_RAW (smpLevel_, smpLevel) BASSURDA_RAW (smpRoot_, smpRoot)
+    BASSURDA_RAW (smpTune_, smpTune) BASSURDA_RAW (smpStart_, smpStart) BASSURDA_RAW (smpLoop_, smpLoop)
+    BASSURDA_RAW (smpPenv_, smpPenv)
+    BASSURDA_RAW (duckMode_, duckMode) BASSURDA_RAW (duckNote_, duckNote) BASSURDA_RAW (duckDepth_, duckDepth)
+    BASSURDA_RAW (duckAtk_, duckAttack) BASSURDA_RAW (duckHold_, duckHold) BASSURDA_RAW (duckRel_, duckRelease)
 #undef BASSURDA_RAW
 };
 
@@ -59,6 +65,9 @@ BassurdaProcessor::BassurdaProcessor()
       apvts (*this, nullptr, "BASSURDA", createParameterLayout())
 {
     raw = std::make_unique<Raw> (apvts);
+    formatManager.registerBasicFormats();
+    for (auto& c : ccMap)
+        c = -1;
 }
 
 BassurdaProcessor::~BassurdaProcessor() = default;
@@ -101,10 +110,18 @@ void BassurdaProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock
     toneSmooth.snap (toF (raw->satTone_));
     gainSmooth.snap (juce::Decibels::decibelsToGain (toF (raw->outGain_)));
 
+    juce::dsp::ProcessSpec osSpec { osRate, (juce::uint32) samplesPerBlock * 4, 1 };
+    xoverLow.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+    xoverHigh.setType (juce::dsp::LinkwitzRileyFilterType::highpass);
+    xoverLow.prepare (osSpec);
+    xoverHigh.prepare (osSpec);
+
     lowCutChoice = -1;
     lowCut.reset();
     dcX = dcY = 0.0f;
     dcCoef = (float) std::exp (-bdsp::twoPi * 5.0 / sampleRate);
+
+    duck.prepare (sampleRate);
 }
 
 void BassurdaProcessor::updateEngineParams()
@@ -164,11 +181,58 @@ void BassurdaProcessor::updateEngineParams()
     p.lfoToPitch  = toF (r.lfoPitch_);
     p.lfoRetrig   = toBool (r.lfoRetrig_);
 
+    p.smpOn    = toBool (r.smpOn_);
+    p.smpLevel = toF (r.smpLevel_);
+    p.smpRoot  = toInt (r.smpRoot_);
+    p.smpTune  = toF (r.smpTune_);
+    p.smpStart = toF (r.smpStart_);
+    p.smpLoop  = toBool (r.smpLoop_);
+    p.smpPenv  = toBool (r.smpPenv_);
+
     engine.setParams (p);
+
+    duck.setParams (toF (r.duckDepth_), toF (r.duckAtk_), toF (r.duckHold_), toF (r.duckRel_));
 }
 
-void BassurdaProcessor::handleMidi (const juce::MidiMessage& m)
+void BassurdaProcessor::handleMidi (const juce::MidiMessage& m, int samplePos)
 {
+    // ---- kick duck triggers (these notes never reach the synth) ------------
+    const int mode = toInt (raw->duckMode_);
+    if (m.isNoteOnOrOff())
+    {
+        const bool isTrigger = (mode == 1 && m.getNoteNumber() == toInt (raw->duckNote_))
+                            || (mode == 2 && m.getChannel() == 10);
+        if (isTrigger)
+        {
+            // the audio is delayed by the oversampling latency (and the host
+            // compensates for it), so delay the duck by the same amount
+            if (m.isNoteOn())
+                duck.schedule (samplePos + latency);
+            return;
+        }
+    }
+
+    // ---- MIDI learn / mapped CCs -------------------------------------------
+    if (m.isController())
+    {
+        const int cc = m.getControllerNumber();
+        if (const int learn = learnParam.exchange (-1); learn >= 0)
+        {
+            for (auto& c : ccMap)
+                if (c.load() == learn)
+                    c = -1;
+            ccMap[(size_t) cc] = learn;
+        }
+
+        const int target = ccMap[(size_t) cc].load();
+        auto& params = getParameters();
+        if (juce::isPositiveAndBelow (target, params.size()))
+        {
+            params[target]->setValueNotifyingHost ((float) m.getControllerValue() / 127.0f);
+            return;
+        }
+    }
+
     if (m.isNoteOn())
         engine.noteOn (m.getNoteNumber(), m.getFloatVelocity());
     else if (m.isNoteOff())
@@ -181,12 +245,34 @@ void BassurdaProcessor::handleMidi (const juce::MidiMessage& m)
         engine.allNotesOff (true);
 }
 
+void BassurdaProcessor::scheduleBeatDucks (int numSamples)
+{
+    auto* ph = getPlayHead();
+    if (ph == nullptr) return;
+    auto pos = ph->getPosition();
+    if (! pos || ! pos->getIsPlaying()) return;
+    auto ppq = pos->getPpqPosition();
+    auto bpm = pos->getBpm();
+    if (! ppq || ! bpm || *bpm <= 0.0) return;
+
+    const double ppqPerSample = *bpm / 60.0 / sampleRate;
+    for (double beat = std::ceil (*ppq); ; beat += 1.0)
+    {
+        const int offset = (int) std::lround ((beat - *ppq) / ppqPerSample);
+        if (offset >= numSamples) break;
+        duck.schedule (offset + latency);
+    }
+}
+
 void BassurdaProcessor::processSaturation (float* main, int numSamples)
 {
-    const int   type     = toInt (raw->satType_);
+    const int  type    = toInt (raw->satType_);
+    const bool highsOnly = toInt (raw->satBand_) == 1;
     driveSmooth.setTarget (toF (raw->satDrive_));
     mixSmooth.setTarget (toF (raw->satMix_));
     toneSmooth.setTarget (toF (raw->satTone_));
+    xoverLow.setCutoffFrequency (toF (raw->satXover_));
+    xoverHigh.setCutoffFrequency (toF (raw->satXover_));
 
     float* channels[] = { main };
     juce::dsp::AudioBlock<float> block (channels, 1, (size_t) numSamples);
@@ -202,11 +288,20 @@ void BassurdaProcessor::processSaturation (float* main, int numSamples)
         const float mix   = mixSmooth.next();
         const float tone  = toneSmooth.next();
 
-        const float dg    = bdsp::Saturator::driveToGain (drive);
+        const float dg     = bdsp::Saturator::driveToGain (drive);
         const float makeup = bdsp::Saturator::makeupGain (type, dg);
 
-        const float dry = os[i];
-        const float driven = dry * dg;
+        const float dry  = os[i];
+        float low = 0.0f, input = dry;
+        if (highsOnly)
+        {
+            // Linkwitz-Riley split: the lows stay clean, only the highs are
+            // driven. LP + HP of a LR4 pair sum back to flat magnitude.
+            low   = xoverLow.processSample (0, dry);
+            input = xoverHigh.processSample (0, dry);
+        }
+
+        const float driven = input * dg;
         activity = std::max (activity, std::abs (driven));
         float wet = (bdsp::Saturator::shape (type, driven) - bdsp::Saturator::shape (type, 0.0f)) * makeup;
 
@@ -215,7 +310,7 @@ void BassurdaProcessor::processSaturation (float* main, int numSamples)
         toneFilter.process (wet, g, 1.4142f);
         wet = toneFilter.low;
 
-        os[i] = dry + mix * (wet - dry);
+        os[i] = low + input + mix * (wet - input);
     }
 
     oversampler.processSamplesDown (block);
@@ -242,20 +337,32 @@ void BassurdaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     float* main = mainBuffer.getWritePointer (0);
     float* sub  = subBuffer.getWritePointer (0);
 
-    // ---- sample-accurate MIDI ------------------------------------------------
-    int pos = 0;
-    for (const auto metadata : midi)
+    if (toInt (raw->duckMode_) == 3)
+        scheduleBeatDucks (numSamples);
+
+    // ---- voice: sample-accurate MIDI -----------------------------------------
     {
-        const int eventPos = juce::jlimit (0, numSamples, metadata.samplePosition);
-        if (eventPos > pos)
+        // never wait for the message thread: if a new sample is being swapped
+        // in right now, render this block without the sample layer
+        juce::SpinLock::ScopedTryLockType lock (sampleLock);
+        engine.setSample (lock.isLocked() ? sampleData.get() : nullptr);
+
+        int pos = 0;
+        for (const auto metadata : midi)
         {
-            engine.render (main + pos, sub + pos, eventPos - pos);
-            pos = eventPos;
+            const int eventPos = juce::jlimit (0, numSamples, metadata.samplePosition);
+            if (eventPos > pos)
+            {
+                engine.render (main + pos, sub + pos, eventPos - pos);
+                pos = eventPos;
+            }
+            handleMidi (metadata.getMessage(), eventPos);
         }
-        handleMidi (metadata.getMessage());
+        if (pos < numSamples)
+            engine.render (main + pos, sub + pos, numSamples - pos);
+
+        engine.setSample (nullptr);
     }
-    if (pos < numSamples)
-        engine.render (main + pos, sub + pos, numSamples - pos);
 
     // ---- saturation (4x oversampled) -------------------------------------------
     processSaturation (main, numSamples);
@@ -271,10 +378,11 @@ void BassurdaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         lowCut.reset();
     }
 
-    // ---- sum, clean up, gain, clip -------------------------------------------
+    // ---- sum, clean up, duck, gain, clip -------------------------------------
     gainSmooth.setTarget (juce::Decibels::decibelsToGain (toF (raw->outGain_)));
     const bool clip = toBool (raw->outClip_);
-    float peak = 0.0f;
+    const bool ducking = toInt (raw->duckMode_) != 0;
+    float peak = 0.0f, minDuck = 1.0f;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -299,6 +407,13 @@ void BassurdaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         if (lowCutChoice > 0)
             x = lowCut.processSample (x);
 
+        const float dg = duck.next();
+        if (ducking)
+        {
+            x *= dg;
+            minDuck = std::min (minDuck, dg);
+        }
+
         x *= gainSmooth.next();
 
         if (clip)
@@ -319,8 +434,11 @@ void BassurdaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
     scope.push (main, numSamples);
     outputPeak = std::max (peak, outputPeak.load() * 0.9f);
+    duckGain = minDuck;
 }
 
+//==============================================================================
+// Factory presets (host program list)
 //==============================================================================
 int BassurdaProcessor::getNumPrograms()
 {
@@ -335,6 +453,8 @@ void BassurdaProcessor::setCurrentProgram (int index)
 
     currentProgram = index;
     applyPreset (apvts, presets[(size_t) index]);
+    currentPresetName = presets[(size_t) index].name;
+    ++presetChangeCounter;
 }
 
 const juce::String BassurdaProcessor::getProgramName (int index)
@@ -343,25 +463,226 @@ const juce::String BassurdaProcessor::getProgramName (int index)
     return juce::isPositiveAndBelow (index, (int) presets.size()) ? presets[(size_t) index].name : juce::String();
 }
 
-void BassurdaProcessor::getStateInformation (juce::MemoryBlock& destData)
+//==============================================================================
+// User presets
+//==============================================================================
+juce::File BassurdaProcessor::getUserPresetFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+               .getChildFile ("Bassurda").getChildFile ("Presets");
+}
+
+juce::Array<juce::File> BassurdaProcessor::getUserPresets() const
+{
+    auto files = getUserPresetFolder().findChildFiles (juce::File::findFiles, false, "*.bassurda");
+    files.sort();
+    return files;
+}
+
+bool BassurdaProcessor::saveUserPreset (const juce::String& name)
+{
+    const auto clean = juce::File::createLegalFileName (name.trim());
+    if (clean.isEmpty())
+        return false;
+
+    auto folder = getUserPresetFolder();
+    if (! folder.createDirectory())
+        return false;
+
+    currentPresetName = name.trim();
+    auto tree = createStateTree (false);
+    auto xml = tree.createXml();
+    if (xml == nullptr || ! xml->writeTo (folder.getChildFile (clean + ".bassurda")))
+        return false;
+
+    ++presetChangeCounter;
+    return true;
+}
+
+bool BassurdaProcessor::loadUserPreset (const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return false;
+
+    restoreStateTree (juce::ValueTree::fromXml (*xml), false);
+    currentPresetName = file.getFileNameWithoutExtension();
+    currentProgram = -1;
+    ++presetChangeCounter;
+    return true;
+}
+
+//==============================================================================
+// Sample oscillator
+//==============================================================================
+bool BassurdaProcessor::loadSample (const juce::File& file, bool autoTune)
+{
+    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
+    if (reader == nullptr || reader->lengthInSamples <= 0)
+        return false;
+
+    const int maxLen = (int) std::min<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 30.0));
+    juce::AudioBuffer<float> buf ((int) reader->numChannels, maxLen);
+    reader->read (&buf, 0, maxLen, 0, true, true);
+
+    auto data = std::make_unique<bdsp::SampleData>();
+    data->sampleRate = reader->sampleRate;
+    data->samples.assign ((size_t) maxLen, 0.0f);
+    const float chScale = 1.0f / (float) std::max (1, buf.getNumChannels());
+    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        for (int i = 0; i < maxLen; ++i)
+            data->samples[(size_t) i] += buf.getSample (ch, i) * chScale;
+
+    // normalise to -1 dBFS so every sample sits at the same level
+    float pk = 0.0f;
+    for (auto v : data->samples) pk = std::max (pk, std::abs (v));
+    if (pk > 1.0e-6f)
+        for (auto& v : data->samples) v *= 0.89f / pk;
+
+    data->computePeaks();
+    data->detectPitch();
+
+    if (autoTune && data->detectedNote > 0.0f)
+    {
+        const int root = juce::jlimit (0, 127, (int) std::lround (data->detectedNote));
+        const float cents = juce::jlimit (-100.0f, 100.0f, (data->detectedNote - (float) root) * 100.0f);
+        auto set = [this] (const char* id, float v)
+        {
+            if (auto* p = apvts.getParameter (id))
+                p->setValueNotifyingHost (p->convertTo0to1 (v));
+        };
+        set (smpRoot, (float) root);
+        set (smpTune, cents);
+    }
+    if (autoTune)
+        if (auto* p = apvts.getParameter (smpOn))
+            p->setValueNotifyingHost (1.0f);
+
+    std::unique_ptr<bdsp::SampleData> old;
+    {
+        const juce::SpinLock::ScopedLockType lock (sampleLock);
+        old = std::move (sampleData);
+        sampleData = std::move (data);
+    }
+    sampleFile = file;
+    ++sampleChangeCounter;
+    return true;
+}
+
+void BassurdaProcessor::clearSample()
+{
+    std::unique_ptr<bdsp::SampleData> old;
+    {
+        const juce::SpinLock::ScopedLockType lock (sampleLock);
+        old = std::move (sampleData);
+    }
+    sampleFile = juce::File();
+    ++sampleChangeCounter;
+}
+
+//==============================================================================
+// MIDI learn
+//==============================================================================
+int BassurdaProcessor::paramIndex (const juce::String& id) const
+{
+    const auto& params = getParameters();
+    for (int i = 0; i < params.size(); ++i)
+        if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (params[i]))
+            if (p->paramID == id)
+                return i;
+    return -1;
+}
+
+void BassurdaProcessor::startMidiLearn (const juce::String& paramId) { learnParam = paramIndex (paramId); }
+
+bool BassurdaProcessor::isLearning (const juce::String& paramId) const
+{
+    const int l = learnParam.load();
+    return l >= 0 && l == paramIndex (paramId);
+}
+
+void BassurdaProcessor::clearMidiMapping (const juce::String& paramId)
+{
+    const int idx = paramIndex (paramId);
+    for (auto& c : ccMap)
+        if (c.load() == idx)
+            c = -1;
+}
+
+int BassurdaProcessor::getMidiCCFor (const juce::String& paramId) const
+{
+    const int idx = paramIndex (paramId);
+    if (idx < 0) return -1;
+    for (int cc = 0; cc < 128; ++cc)
+        if (ccMap[(size_t) cc].load() == idx)
+            return cc;
+    return -1;
+}
+
+//==============================================================================
+// State
+//==============================================================================
+juce::ValueTree BassurdaProcessor::createStateTree (bool includeMidiMap)
 {
     auto state = apvts.copyState();
     state.setProperty ("program", currentProgram, nullptr);
-    if (auto xml = state.createXml())
+    state.setProperty ("presetName", currentPresetName, nullptr);
+    state.setProperty ("samplePath", sampleFile.getFullPathName(), nullptr);
+
+    if (includeMidiMap)
+    {
+        juce::StringArray map;
+        const auto& params = getParameters();
+        for (int cc = 0; cc < 128; ++cc)
+        {
+            const int idx = ccMap[(size_t) cc].load();
+            if (juce::isPositiveAndBelow (idx, params.size()))
+                if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (params[idx]))
+                    map.add (juce::String (cc) + "=" + p->paramID);
+        }
+        state.setProperty ("midiMap", map.joinIntoString (";"), nullptr);
+    }
+    return state;
+}
+
+void BassurdaProcessor::restoreStateTree (const juce::ValueTree& tree, bool includeMidiMap)
+{
+    apvts.replaceState (tree);
+    currentProgram    = tree.getProperty ("program", -1);
+    currentPresetName = tree.getProperty ("presetName", "Init Bass").toString();
+
+    const juce::File file (tree.getProperty ("samplePath").toString());
+    if (tree.getProperty ("samplePath").toString().isEmpty())
+        clearSample();
+    else if (file != sampleFile && file.existsAsFile())
+        loadSample (file, false);
+
+    if (includeMidiMap)
+    {
+        for (auto& c : ccMap)
+            c = -1;
+        for (const auto& entry : juce::StringArray::fromTokens (tree.getProperty ("midiMap").toString(), ";", ""))
+        {
+            const int cc = entry.upToFirstOccurrenceOf ("=", false, false).getIntValue();
+            const int idx = paramIndex (entry.fromFirstOccurrenceOf ("=", false, false));
+            if (juce::isPositiveAndBelow (cc, 128) && idx >= 0)
+                ccMap[(size_t) cc] = idx;
+        }
+    }
+    ++presetChangeCounter;
+}
+
+void BassurdaProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = createStateTree (true).createXml())
         copyXmlToBinary (*xml, destData);
 }
 
 void BassurdaProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
-    {
         if (xml->hasTagName (apvts.state.getType()))
-        {
-            auto tree = juce::ValueTree::fromXml (*xml);
-            currentProgram = tree.getProperty ("program", 0);
-            apvts.replaceState (tree);
-        }
-    }
+            restoreStateTree (juce::ValueTree::fromXml (*xml), true);
 }
 
 juce::AudioProcessorEditor* BassurdaProcessor::createEditor()

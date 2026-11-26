@@ -549,3 +549,126 @@ void MeterDisplay::drawContent (Graphics& g, Rectangle<float> r)
     g.setColour (Colours::white.withAlpha (0.8f));
     g.drawHorizontalLine ((int) toY (held), bar.getX(), bar.getRight());
 }
+
+//==============================================================================
+bool SampleDisplay::isInterestedInFileDrag (const StringArray& files)
+{
+    for (auto& f : files)
+        if (File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3"))
+            return true;
+    return false;
+}
+
+void SampleDisplay::filesDropped (const StringArray& files, int, int)
+{
+    dragOver = false;
+    for (auto& f : files)
+        if (proc.loadSample (File (f)))
+            break;
+    repaint();
+}
+
+float SampleDisplay::signature()
+{
+    using namespace ParamID;
+    return (float) proc.sampleChangeCounter.load() + value (smpOn) * 1000 + value (smpStart) * 1.0e4f
+           + value (smpRoot) * 7.0f + value (smpTune) * 0.01f + value (smpLoop) * 3.0e5f + (dragOver ? 1.0e6f : 0.0f);
+}
+
+void SampleDisplay::drawContent (Graphics& g, Rectangle<float> r)
+{
+    using namespace ParamID;
+    drawGrid (g, r, 10, 4);
+    auto* sample = proc.getSampleForDisplay();
+    const bool on = value (smpOn) > 0.5f;
+
+    if (sample == nullptr || sample->peaks.empty())
+    {
+        g.setFont (LAF::labelFont (11.0f));
+        g.setColour (dragOver ? C::orange : C::cyanDim.brighter (0.4f));
+        g.drawText (dragOver ? "DROP TO LOAD" : "DRAG A WAV HERE  OR  PRESS LOAD", r, Justification::centred, false);
+        return;
+    }
+
+    auto plot = r.reduced (4.0f, 6.0f).withTrimmedTop (10.0f);
+    const auto& pk = sample->peaks;
+    const Colour col = on ? C::cyan : C::cyanDim;
+    Path p;
+    const int n = (int) pk.size();
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = plot.getX() + (float) i / (float) (n - 1) * plot.getWidth();
+        const float h = pk[(size_t) i] * plot.getHeight() * 0.5f;
+        p.addRectangle (x, plot.getCentreY() - h, jmax (1.0f, plot.getWidth() / (float) n), jmax (0.5f, h * 2.0f));
+    }
+    g.setColour (col.withAlpha (0.85f));
+    g.fillPath (p);
+
+    const float startX = plot.getX() + value (smpStart) * plot.getWidth();
+    g.setColour (C::orange);
+    g.drawVerticalLine ((int) startX, plot.getY(), plot.getBottom());
+
+    const int root = (int) value (smpRoot);
+    const float tune = value (smpTune);
+    drawTag (g, r, proc.getSampleName().toUpperCase(), Justification::topLeft, on ? C::cyan : C::cyanDim);
+    drawTag (g, r, "ROOT " + MidiMessage::getMidiNoteName (root, true, true, 3)
+                   + (std::abs (tune) > 0.5f ? (tune > 0 ? " +" : " ") + String (roundToInt (tune)) + "ct" : String())
+                   + (value (smpLoop) > 0.5f ? "  LOOP" : ""),
+             Justification::topRight, C::orange);
+    if (dragOver)
+        drawTag (g, r.withTrimmedTop (r.getHeight() * 0.5f - 8.0f), "DROP TO REPLACE", Justification::centredTop, C::orange);
+}
+
+//==============================================================================
+float DuckDisplay::signature()
+{
+    using namespace ParamID;
+    return value (duckMode) + value (duckDepth) * 10 + value (duckAttack) * 100 + value (duckHold) * 1000
+           + value (duckRelease) * 1.0e4f + proc.duckGain.load() * 1.0e7f + value (duckNote) * 3.0f;
+}
+
+void DuckDisplay::drawContent (Graphics& g, Rectangle<float> r)
+{
+    using namespace ParamID;
+    drawGrid (g, r, 8, 4);
+
+    const int   mode  = (int) value (duckMode);
+    const float depth = value (duckDepth);
+    const float atk   = value (duckAttack), hold = value (duckHold), rel = value (duckRelease);
+    const float floorG = 1.0f - depth;
+
+    auto plot = r.reduced (8.0f, 6.0f).withTrimmedTop (12.0f);
+    const float total = jmax (200.0f, (atk + hold + rel) * 1.25f);
+    auto xAt = [&] (float ms) { return plot.getX() + ms / total * plot.getWidth(); };
+    auto yAt = [&] (float gain) { return plot.getBottom() - gain * plot.getHeight(); };
+
+    Path p;
+    p.startNewSubPath (plot.getX(), yAt (1.0f));
+    p.lineTo (xAt (atk), yAt (floorG));
+    p.lineTo (xAt (atk + hold), yAt (floorG));
+    for (int i = 1; i <= 30; ++i)
+    {
+        const float x = (float) i / 30.0f;
+        p.lineTo (xAt (atk + hold + x * rel), yAt (floorG + (1.0f - floorG) * (1.0f - (1.0f - x) * (1.0f - x))));
+    }
+    p.lineTo (plot.getRight(), yAt (1.0f));
+
+    const Colour col = mode == 0 ? C::cyanDim : C::red.interpolatedWith (C::orange, 0.4f);
+    LAF::strokeGlow (g, p, col, 1.6f);
+
+    // live gain reduction bar
+    const float live = proc.duckGain.load();
+    if (mode != 0 && live < 0.999f)
+    {
+        auto bar = r.removeFromRight (6.0f).reduced (0.0f, 4.0f);
+        g.setColour (C::red);
+        g.fillRect (bar.withTop (bar.getY()).withHeight ((1.0f - live) * bar.getHeight()));
+    }
+
+    String trigger = ParamChoices::duckMode[jlimit (0, 3, mode)].toUpperCase();
+    if (mode == 1)
+        trigger += "  " + MidiMessage::getMidiNoteName ((int) value (duckNote), true, true, 3);
+    drawTag (g, r, trigger, Justification::topLeft, mode == 0 ? C::cyanDim : C::cyan);
+    drawTag (g, r, depth >= 0.999f ? String ("-INF dB") : String (Decibels::gainToDecibels (floorG), 1) + " dB",
+             Justification::topRight, C::orange);
+}

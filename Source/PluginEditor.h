@@ -6,11 +6,11 @@
 #include "GUI/Modules.h"
 
 // Fixed-size design surface; the editor scales it to the window size.
-class MainView : public juce::Component
+class MainView : public juce::Component, private juce::Timer
 {
 public:
     static constexpr int designWidth  = 1200;
-    static constexpr int designHeight = 846;
+    static constexpr int designHeight = 1060;
 
     explicit MainView (BassurdaProcessor&);
     void paint (juce::Graphics&) override;
@@ -19,11 +19,17 @@ public:
 private:
     void refreshPresetBox();
     void stepPreset (int delta);
+    void showPresetMenu();
+    void savePresetDialog();
+    void timerCallback() override;
 
     BassurdaProcessor& proc;
+    int lastPresetCounter = -1;
+    juce::Array<juce::File> userPresets;
 
     juce::ComboBox presetBox;
-    juce::TextButton prevButton { "<" }, nextButton { ">" };
+    juce::TextButton prevButton { "<" }, nextButton { ">" }, menuButton { "PRESET" };
+    std::unique_ptr<juce::AlertWindow> saveWindow;
 
     OscModule oscA, oscB;
     SubModule sub;
@@ -34,6 +40,8 @@ private:
     VoiceModule voice;
     LfoModule lfo;
     SaturationModule saturation;
+    SampleModule sample;
+    DuckModule duck;
     OutputModule output;
     juce::MidiKeyboardComponent keyboard;
 };

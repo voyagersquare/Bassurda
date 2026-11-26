@@ -120,3 +120,27 @@ protected:
 private:
     float held = 0.0f, smoothed = 0.0f;
 };
+
+class SampleDisplay : public LcdDisplay, public juce::FileDragAndDropTarget
+{
+public:
+    explicit SampleDisplay (BassurdaProcessor& p) : LcdDisplay (p, "808 SAMPLE") {}
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int, int) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override { dragOver = true; repaint(); }
+    void fileDragExit (const juce::StringArray&) override { dragOver = false; repaint(); }
+protected:
+    void drawContent (juce::Graphics&, juce::Rectangle<float>) override;
+    float signature() override;
+private:
+    bool dragOver = false;
+};
+
+class DuckDisplay : public LcdDisplay
+{
+public:
+    explicit DuckDisplay (BassurdaProcessor& p) : LcdDisplay (p, "KICK DUCK") {}
+protected:
+    void drawContent (juce::Graphics&, juce::Rectangle<float>) override;
+    float signature() override;
+};

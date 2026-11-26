@@ -10,49 +10,150 @@ MainView::MainView (BassurdaProcessor& p)
     : proc (p),
       oscA (p, 0), oscB (p, 1), sub (p), scope (p),
       filter (p), filterEnv (p, false), ampEnv (p, true), pitch (p),
-      voice (p), lfo (p), saturation (p), output (p),
+      voice (p), lfo (p), saturation (p), sample (p), duck (p), output (p),
       keyboard (p.keyboardState, MidiKeyboardComponent::horizontalKeyboard)
 {
     for (auto* c : { (Component*) &oscA, (Component*) &oscB, (Component*) &sub, (Component*) &scope,
                      (Component*) &filter, (Component*) &filterEnv, (Component*) &ampEnv, (Component*) &pitch,
                      (Component*) &voice, (Component*) &lfo, (Component*) &saturation, (Component*) &output,
+                     (Component*) &sample, (Component*) &duck, (Component*) &menuButton,
                      (Component*) &keyboard, (Component*) &presetBox, (Component*) &prevButton, (Component*) &nextButton })
         addAndMakeVisible (c);
 
     keyboard.setAvailableRange (24, 84);
     keyboard.setLowestVisibleKey (24);
-    keyboard.setOctaveForMiddleC (4);
+    keyboard.setOctaveForMiddleC (3);
     keyboard.setWantsKeyboardFocus (false);
 
     refreshPresetBox();
     presetBox.onChange = [this]
     {
-        const int idx = presetBox.getSelectedItemIndex();
-        if (idx >= 0 && idx != proc.getCurrentProgram())
-            proc.setCurrentProgram (idx);
+        const int id = presetBox.getSelectedId();
+        if (id <= 0) return;
+        if (id < 1000)
+        {
+            proc.setCurrentProgram (id - 1);
+        }
+        else if (juce::isPositiveAndBelow (id - 1000, userPresets.size()))
+        {
+            if (! proc.loadUserPreset (userPresets[id - 1000]))
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Bassurda", "Could not load this preset.");
+        }
     };
     prevButton.onClick = [this] { stepPreset (-1); };
     nextButton.onClick = [this] { stepPreset (1); };
+    menuButton.onClick = [this] { showPresetMenu(); };
     prevButton.setTooltip ("Previous preset");
     nextButton.setTooltip ("Next preset");
+    menuButton.setTooltip ("Save, delete and manage your own presets");
 
     setSize (designWidth, designHeight);
+    startTimerHz (5);
 }
 
 void MainView::refreshPresetBox()
 {
     presetBox.clear (dontSendNotification);
+    presetBox.addSectionHeading ("FACTORY");
     for (int i = 0; i < proc.getNumPrograms(); ++i)
         presetBox.addItem (proc.getProgramName (i), i + 1);
-    presetBox.setSelectedItemIndex (proc.getCurrentProgram(), dontSendNotification);
+
+    userPresets = proc.getUserPresets();
+    if (! userPresets.isEmpty())
+    {
+        presetBox.addSeparator();
+        presetBox.addSectionHeading ("USER");
+        for (int i = 0; i < userPresets.size(); ++i)
+            presetBox.addItem (userPresets[i].getFileNameWithoutExtension(), 1000 + i);
+    }
+
+    // select the entry that matches the current preset name
+    const auto name = proc.getCurrentPresetName();
+    int selected = 0;
+    if (proc.getCurrentProgram() >= 0 && proc.getProgramName (proc.getCurrentProgram()) == name)
+        selected = proc.getCurrentProgram() + 1;
+    else
+        for (int i = 0; i < userPresets.size(); ++i)
+            if (userPresets[i].getFileNameWithoutExtension() == name)
+                selected = 1000 + i;
+
+    if (selected > 0)
+        presetBox.setSelectedId (selected, dontSendNotification);
+    else
+        presetBox.setText (name, dontSendNotification);
+}
+
+void MainView::timerCallback()
+{
+    const int c = proc.presetChangeCounter.load();
+    if (c != lastPresetCounter)
+    {
+        lastPresetCounter = c;
+        refreshPresetBox();
+    }
 }
 
 void MainView::stepPreset (int delta)
 {
-    const int n = proc.getNumPrograms();
-    const int idx = (proc.getCurrentProgram() + delta + n) % n;
-    proc.setCurrentProgram (idx);
-    presetBox.setSelectedItemIndex (idx, dontSendNotification);
+    const int n = presetBox.getNumItems();
+    if (n == 0) return;
+    const int idx = presetBox.getSelectedItemIndex();
+    const int next = idx < 0 ? 0 : (idx + delta + n) % n;
+    presetBox.setSelectedItemIndex (next, sendNotificationSync);
+}
+
+void MainView::showPresetMenu()
+{
+    PopupMenu m;
+    const auto current = proc.getCurrentPresetName();
+    const auto currentFile = BassurdaProcessor::getUserPresetFolder().getChildFile (File::createLegalFileName (current) + ".bassurda");
+
+    m.addItem (1, "Save preset as...");
+    m.addItem (2, "Delete \"" + current + "\"", currentFile.existsAsFile());
+    m.addSeparator();
+    m.addItem (3, "Open preset folder");
+    m.addItem (4, "Refresh list");
+
+    SafePointer<MainView> safe (this);
+    m.showMenuAsync (PopupMenu::Options().withTargetComponent (&menuButton), [safe, currentFile] (int r)
+    {
+        if (safe == nullptr) return;
+        if (r == 1) safe->savePresetDialog();
+        if (r == 2)
+        {
+            currentFile.deleteFile();
+            safe->refreshPresetBox();
+        }
+        if (r == 3)
+        {
+            BassurdaProcessor::getUserPresetFolder().createDirectory();
+            BassurdaProcessor::getUserPresetFolder().revealToUser();
+        }
+        if (r == 4) safe->refreshPresetBox();
+    });
+}
+
+void MainView::savePresetDialog()
+{
+    saveWindow = std::make_unique<AlertWindow> ("Save preset", "Name your sound:", MessageBoxIconType::NoIcon, this);
+    saveWindow->addTextEditor ("name", proc.getCurrentPresetName());
+    saveWindow->addButton ("Save", 1, KeyPress (KeyPress::returnKey));
+    saveWindow->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+
+    SafePointer<MainView> safe (this);
+    saveWindow->enterModalState (true, ModalCallbackFunction::create ([safe] (int result)
+    {
+        if (safe == nullptr || safe->saveWindow == nullptr) return;
+        const auto name = safe->saveWindow->getTextEditorContents ("name");
+        safe->saveWindow->setVisible (false);
+        if (result == 1)
+        {
+            if (safe->proc.saveUserPreset (name))
+                safe->refreshPresetBox();
+            else
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Bassurda", "Could not save the preset.");
+        }
+    }), false);
 }
 
 void MainView::paint (Graphics& g)
@@ -125,9 +226,10 @@ void MainView::resized()
 {
     // header: preset browser in the middle
     {
-        const int w = 330, h = 28;
+        const int w = 410, h = 28;
         auto r = Rectangle<int> (0, 0, w, h).withCentre ({ designWidth / 2 + 10, 33 });
         prevButton.setBounds (r.removeFromLeft (30));
+        menuButton.setBounds (r.removeFromRight (70).withTrimmedLeft (4));
         nextButton.setBounds (r.removeFromRight (30));
         presetBox.setBounds (r.reduced (3, 0));
     }
@@ -152,9 +254,14 @@ void MainView::resized()
 
     auto row3 = area.removeFromTop (208);
     voice.setBounds (row3.removeFromLeft (352));      row3.removeFromLeft (gap);
-    lfo.setBounds (row3.removeFromLeft (300));        row3.removeFromLeft (gap);
-    saturation.setBounds (row3.removeFromLeft (300)); row3.removeFromLeft (gap);
-    output.setBounds (row3);
+    lfo.setBounds (row3.removeFromLeft (330));        row3.removeFromLeft (gap);
+    saturation.setBounds (row3);
+    area.removeFromTop (gap);
+
+    auto row4 = area.removeFromTop (208);
+    sample.setBounds (row4.removeFromLeft (470));     row4.removeFromLeft (gap);
+    duck.setBounds (row4.removeFromLeft (470));       row4.removeFromLeft (gap);
+    output.setBounds (row4);
     area.removeFromTop (gap);
 
     keyboard.setBounds (area.removeFromTop (52));
@@ -174,8 +281,16 @@ BassurdaEditor::BassurdaEditor (BassurdaProcessor& p)
     setResizeLimits (MainView::designWidth / 2, MainView::designHeight / 2,
                      MainView::designWidth * 2, MainView::designHeight * 2);
 
-    // start a bit smaller than the design size so it fits laptop screens
-    setSize (roundToInt (MainView::designWidth * 0.85), roundToInt (MainView::designHeight * 0.85));
+    // start at a size that fits the screen (the window can be resized)
+    double scale = 0.85;
+    if (auto* display = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+    {
+        const auto area = display->userArea;
+        scale = jmin (1.0, (area.getHeight() - 80) / (double) MainView::designHeight,
+                      (area.getWidth() - 40) / (double) MainView::designWidth);
+    }
+    scale = jmax (0.5, scale);
+    setSize (roundToInt (MainView::designWidth * scale), roundToInt (MainView::designHeight * scale));
 }
 
 BassurdaEditor::~BassurdaEditor()

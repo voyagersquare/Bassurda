@@ -6,9 +6,23 @@
 
 using APVTS = juce::AudioProcessorValueTreeState;
 
+// Slider that hands right-clicks to a callback instead of dragging.
+class LearnSlider : public juce::Slider
+{
+public:
+    std::function<void()> onRightClick;
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { if (onRightClick) onRightClick(); return; }
+        Slider::mouseDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override { if (! e.mods.isPopupMenu()) Slider::mouseDrag (e); }
+    void mouseUp (const juce::MouseEvent& e) override   { if (! e.mods.isPopupMenu()) Slider::mouseUp (e); }
+};
+
 // Rotary knob with an engraved name that turns into the live value while
-// the mouse is over it or it is being dragged.
-class Knob : public juce::Component
+// the mouse is over it or it is being dragged. Right-click: MIDI learn.
+class Knob : public juce::Component, private juce::Timer
 {
 public:
     Knob (APVTS& state, const juce::String& paramId, juce::String displayName, juce::Colour accent = {});
@@ -17,10 +31,15 @@ public:
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { repaint(); }
 
-    juce::Slider slider;
+    LearnSlider slider;
 
 private:
-    juce::String name;
+    void showMenu();
+    void timerCallback() override;
+
+    juce::String name, paramId;
+    BassurdaProcessor* proc = nullptr;
+    int blink = 0;
     APVTS::SliderAttachment attachment;
 };
 
@@ -30,6 +49,7 @@ class ChoiceButtons : public juce::Component
 public:
     ChoiceButtons (APVTS& state, const juce::String& paramId, juce::StringArray labels, juce::String caption = {});
     void resized() override;
+    void setTooltip (const juce::String& tip) { for (auto* b : buttons) b->setTooltip (tip); }
     void paint (juce::Graphics&) override;
 
 private:
@@ -163,8 +183,33 @@ public:
     void resized() override;
 private:
     SaturationDisplay display;
-    ChoiceButtons type;
-    Knob drive, tone, mix;
+    ChoiceButtons type, band;
+    Knob drive, tone, mix, xover;
+};
+
+class SampleModule : public ModulePanel
+{
+public:
+    explicit SampleModule (BassurdaProcessor&);
+    void resized() override;
+private:
+    BassurdaProcessor& proc;
+    SampleDisplay display;
+    juce::TextButton loadButton { "LOAD" }, clearButton { "CLEAR" };
+    LedToggle on, loop, penv;
+    Knob level, root, tune, start;
+    std::unique_ptr<juce::FileChooser> chooser;
+};
+
+class DuckModule : public ModulePanel
+{
+public:
+    explicit DuckModule (BassurdaProcessor&);
+    void resized() override;
+private:
+    DuckDisplay display;
+    ChoiceButtons mode;
+    Knob note, depth, attack, hold, release;
 };
 
 class OutputModule : public ModulePanel
