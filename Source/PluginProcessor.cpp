@@ -1,0 +1,375 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+#include "Presets.h"
+#include "DSP/Saturator.h"
+
+using namespace ParamID;
+
+struct BassurdaProcessor::Raw
+{
+    explicit Raw (juce::AudioProcessorValueTreeState& s) : apvts (s) {}
+
+    std::atomic<float>* get (const char* id)
+    {
+        auto* p = apvts.getRawParameterValue (id);
+        jassert (p != nullptr);
+        return p;
+    }
+
+    juce::AudioProcessorValueTreeState& apvts;
+
+#define BASSURDA_RAW(name, id) std::atomic<float>* name = get (id);
+    BASSURDA_RAW (glideTime_, glideTime)  BASSURDA_RAW (glideMode_, glideMode)  BASSURDA_RAW (glideCurve_, glideCurve)
+    BASSURDA_RAW (envMode_, envMode)      BASSURDA_RAW (bendRange_, bendRange)  BASSURDA_RAW (velocity_, velocity)
+    BASSURDA_RAW (phaseRetrig_, phaseRetrig) BASSURDA_RAW (phaseStart_, phaseStart) BASSURDA_RAW (drift_, driftAmount)
+
+    BASSURDA_RAW (o1On, osc1On) BASSURDA_RAW (o1Wave, osc1Wave) BASSURDA_RAW (o1Pw, osc1Pw) BASSURDA_RAW (o1Oct, osc1Oct)
+    BASSURDA_RAW (o1Semi, osc1Semi) BASSURDA_RAW (o1Fine, osc1Fine) BASSURDA_RAW (o1Level, osc1Level)
+    BASSURDA_RAW (o2On, osc2On) BASSURDA_RAW (o2Wave, osc2Wave) BASSURDA_RAW (o2Pw, osc2Pw) BASSURDA_RAW (o2Oct, osc2Oct)
+    BASSURDA_RAW (o2Semi, osc2Semi) BASSURDA_RAW (o2Fine, osc2Fine) BASSURDA_RAW (o2Level, osc2Level)
+    BASSURDA_RAW (o2Voices, osc2Voices) BASSURDA_RAW (o2Detune, osc2Detune)
+
+    BASSURDA_RAW (subLevel_, subLevel) BASSURDA_RAW (subWave_, subWave) BASSURDA_RAW (subOct_, subOct)
+    BASSURDA_RAW (subClean_, subClean) BASSURDA_RAW (clickLevel_, clickLevel) BASSURDA_RAW (clickTone_, clickTone)
+
+    BASSURDA_RAW (pitchAmt_, pitchAmt) BASSURDA_RAW (pitchDecay_, pitchDecay) BASSURDA_RAW (pitchSub_, pitchSub)
+
+    BASSURDA_RAW (fltType_, fltType) BASSURDA_RAW (fltCutoff_, fltCutoff) BASSURDA_RAW (fltReso_, fltReso)
+    BASSURDA_RAW (fltEnv_, fltEnv) BASSURDA_RAW (fltKey_, fltKey) BASSURDA_RAW (fltDrive_, fltDrive)
+
+    BASSURDA_RAW (fA, fAtk) BASSURDA_RAW (fD, fDec) BASSURDA_RAW (fS, fSus) BASSURDA_RAW (fR, fRel)
+    BASSURDA_RAW (aA, aAtk) BASSURDA_RAW (aD, aDec) BASSURDA_RAW (aS, aSus) BASSURDA_RAW (aR, aRel)
+
+    BASSURDA_RAW (lfoRate_, lfoRate) BASSURDA_RAW (lfoSync_, lfoSync) BASSURDA_RAW (lfoDiv_, lfoDiv)
+    BASSURDA_RAW (lfoShape_, lfoShape) BASSURDA_RAW (lfoCutoff_, lfoCutoff) BASSURDA_RAW (lfoPitch_, lfoPitch)
+    BASSURDA_RAW (lfoRetrig_, lfoRetrig)
+
+    BASSURDA_RAW (satType_, satType) BASSURDA_RAW (satDrive_, satDrive) BASSURDA_RAW (satTone_, satTone) BASSURDA_RAW (satMix_, satMix)
+    BASSURDA_RAW (outGain_, outGain) BASSURDA_RAW (outClip_, outClip) BASSURDA_RAW (lowCut_, monoCut)
+#undef BASSURDA_RAW
+};
+
+static inline int   toInt (std::atomic<float>* p)  { return (int) std::lround (p->load (std::memory_order_relaxed)); }
+static inline float toF (std::atomic<float>* p)    { return p->load (std::memory_order_relaxed); }
+static inline bool  toBool (std::atomic<float>* p) { return p->load (std::memory_order_relaxed) > 0.5f; }
+
+//==============================================================================
+BassurdaProcessor::BassurdaProcessor()
+    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "BASSURDA", createParameterLayout())
+{
+    raw = std::make_unique<Raw> (apvts);
+}
+
+BassurdaProcessor::~BassurdaProcessor() = default;
+
+bool BassurdaProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    const auto& out = layouts.getMainOutputChannelSet();
+    return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
+}
+
+void BassurdaProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock)
+{
+    sampleRate = newSampleRate;
+    uiSampleRate = newSampleRate;
+
+    engine.prepare (sampleRate);
+    updateEngineParams();
+
+    oversampler.reset();
+    oversampler.initProcessing ((size_t) samplesPerBlock);
+    latency = (int) std::lround (oversampler.getLatencyInSamples());
+    setLatencySamples (latency);
+
+    // the clean sub skips the oversampled saturation, so delay it by exactly
+    // the same amount to keep it phase-aligned with the rest of the sound
+    subDelay.assign ((size_t) std::max (1, latency), 0.0f);
+    subDelayPos = 0;
+
+    mainBuffer.setSize (1, samplesPerBlock, false, true, true);
+    subBuffer.setSize (1, samplesPerBlock, false, true, true);
+
+    const double osRate = sampleRate * 4.0;
+    toneFilter.reset();
+    driveSmooth.prepare (osRate, 20.0f);
+    mixSmooth.prepare (osRate, 20.0f);
+    toneSmooth.prepare (osRate, 20.0f);
+    gainSmooth.prepare (sampleRate, 20.0f);
+    driveSmooth.snap (toF (raw->satDrive_));
+    mixSmooth.snap (toF (raw->satMix_));
+    toneSmooth.snap (toF (raw->satTone_));
+    gainSmooth.snap (juce::Decibels::decibelsToGain (toF (raw->outGain_)));
+
+    lowCutChoice = -1;
+    lowCut.reset();
+    dcX = dcY = 0.0f;
+    dcCoef = (float) std::exp (-bdsp::twoPi * 5.0 / sampleRate);
+}
+
+void BassurdaProcessor::updateEngineParams()
+{
+    auto& p = engineParams;
+    auto& r = *raw;
+
+    p.glideMs     = toF (r.glideTime_);
+    p.glideMode   = toInt (r.glideMode_);
+    p.glideCurve  = toInt (r.glideCurve_);
+    p.envMode     = toInt (r.envMode_);
+    p.bendRange   = toInt (r.bendRange_);
+    p.velSens     = toF (r.velocity_);
+    p.phaseRetrig = toBool (r.phaseRetrig_);
+    p.phaseStart  = toF (r.phaseStart_) / 360.0f;
+    p.drift       = toF (r.drift_);
+
+    p.osc1 = { toBool (r.o1On), toF (r.o1Wave), toF (r.o1Pw), toInt (r.o1Oct), toInt (r.o1Semi), toF (r.o1Fine), toF (r.o1Level) };
+    p.osc2 = { toBool (r.o2On), toF (r.o2Wave), toF (r.o2Pw), toInt (r.o2Oct), toInt (r.o2Semi), toF (r.o2Fine), toF (r.o2Level) };
+    p.osc2Voices = toInt (r.o2Voices);
+    p.osc2Detune = toF (r.o2Detune);
+
+    p.subLevel   = toF (r.subLevel_);
+    p.subWave    = toInt (r.subWave_);
+    p.subOct     = toInt (r.subOct_);
+    p.subClean   = toBool (r.subClean_);
+    p.clickLevel = toF (r.clickLevel_);
+    p.clickTone  = toF (r.clickTone_);
+
+    p.pitchAmt     = toF (r.pitchAmt_);
+    p.pitchDecayMs = toF (r.pitchDecay_);
+    p.pitchToSub   = toBool (r.pitchSub_);
+
+    p.fltType  = toInt (r.fltType_);
+    p.cutoff   = toF (r.fltCutoff_);
+    p.reso     = toF (r.fltReso_);
+    p.fltEnv   = toF (r.fltEnv_);
+    p.keyTrack = toF (r.fltKey_);
+    p.fltDrive = toF (r.fltDrive_);
+
+    p.filterEnv = { toF (r.fA), toF (r.fD), toF (r.fS), toF (r.fR) };
+    p.ampEnv    = { toF (r.aA), toF (r.aD), toF (r.aS), toF (r.aR) };
+
+    float rate = toF (r.lfoRate_);
+    if (toBool (r.lfoSync_))
+    {
+        double bpm = 120.0;
+        if (auto* ph = getPlayHead())
+            if (auto pos = ph->getPosition())
+                if (auto b = pos->getBpm())
+                    bpm = *b;
+        rate = (float) (bpm / 60.0 / lfoDivisionInBeats (toInt (r.lfoDiv_)));
+    }
+    p.lfoRateHz   = rate;
+    p.lfoShape    = toInt (r.lfoShape_);
+    p.lfoToCutoff = toF (r.lfoCutoff_);
+    p.lfoToPitch  = toF (r.lfoPitch_);
+    p.lfoRetrig   = toBool (r.lfoRetrig_);
+
+    engine.setParams (p);
+}
+
+void BassurdaProcessor::handleMidi (const juce::MidiMessage& m)
+{
+    if (m.isNoteOn())
+        engine.noteOn (m.getNoteNumber(), m.getFloatVelocity());
+    else if (m.isNoteOff())
+        engine.noteOff (m.getNoteNumber());
+    else if (m.isPitchWheel())
+        engine.pitchBend (m.getPitchWheelValue());
+    else if (m.isAllNotesOff())
+        engine.allNotesOff (false);
+    else if (m.isAllSoundOff())
+        engine.allNotesOff (true);
+}
+
+void BassurdaProcessor::processSaturation (float* main, int numSamples)
+{
+    const int   type     = toInt (raw->satType_);
+    driveSmooth.setTarget (toF (raw->satDrive_));
+    mixSmooth.setTarget (toF (raw->satMix_));
+    toneSmooth.setTarget (toF (raw->satTone_));
+
+    float* channels[] = { main };
+    juce::dsp::AudioBlock<float> block (channels, 1, (size_t) numSamples);
+    auto osBlock = oversampler.processSamplesUp (block);
+    float* os = osBlock.getChannelPointer (0);
+    const int osN = (int) osBlock.getNumSamples();
+    const float osRate = (float) (sampleRate * 4.0);
+
+    float activity = 0.0f;
+    for (int i = 0; i < osN; ++i)
+    {
+        const float drive = driveSmooth.next();
+        const float mix   = mixSmooth.next();
+        const float tone  = toneSmooth.next();
+
+        const float dg    = bdsp::Saturator::driveToGain (drive);
+        const float makeup = bdsp::Saturator::makeupGain (type, dg);
+
+        const float dry = os[i];
+        const float driven = dry * dg;
+        activity = std::max (activity, std::abs (driven));
+        float wet = (bdsp::Saturator::shape (type, driven) - bdsp::Saturator::shape (type, 0.0f)) * makeup;
+
+        // tone: gentle 12 dB/oct low-pass on the wet signal tames fizz
+        const float g = std::tan (bdsp::pi * std::min (tone, osRate * 0.45f) / osRate);
+        toneFilter.process (wet, g, 1.4142f);
+        wet = toneFilter.low;
+
+        os[i] = dry + mix * (wet - dry);
+    }
+
+    oversampler.processSamplesDown (block);
+    satActivity = activity;
+}
+
+void BassurdaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    const int numSamples = buffer.getNumSamples();
+    keyboardState.processNextMidiBuffer (midi, 0, numSamples, true);
+
+    updateEngineParams();
+
+    if (mainBuffer.getNumSamples() < numSamples)
+    {
+        // host sent a bigger block than announced: stay safe
+        mainBuffer.setSize (1, numSamples, false, false, true);
+        subBuffer.setSize (1, numSamples, false, false, true);
+        oversampler.initProcessing ((size_t) numSamples);
+    }
+
+    float* main = mainBuffer.getWritePointer (0);
+    float* sub  = subBuffer.getWritePointer (0);
+
+    // ---- sample-accurate MIDI ------------------------------------------------
+    int pos = 0;
+    for (const auto metadata : midi)
+    {
+        const int eventPos = juce::jlimit (0, numSamples, metadata.samplePosition);
+        if (eventPos > pos)
+        {
+            engine.render (main + pos, sub + pos, eventPos - pos);
+            pos = eventPos;
+        }
+        handleMidi (metadata.getMessage());
+    }
+    if (pos < numSamples)
+        engine.render (main + pos, sub + pos, numSamples - pos);
+
+    // ---- saturation (4x oversampled) -------------------------------------------
+    processSaturation (main, numSamples);
+
+    // ---- low cut setup ----------------------------------------------------------
+    const int lc = toInt (raw->lowCut_);
+    if (lc != lowCutChoice)
+    {
+        lowCutChoice = lc;
+        static const float freqs[] = { 0.0f, 20.0f, 30.0f, 40.0f };
+        if (lc > 0)
+            lowCut.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, freqs[lc], 0.7071f);
+        lowCut.reset();
+    }
+
+    // ---- sum, clean up, gain, clip -------------------------------------------
+    gainSmooth.setTarget (juce::Decibels::decibelsToGain (toF (raw->outGain_)));
+    const bool clip = toBool (raw->outClip_);
+    float peak = 0.0f;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        // delay clean sub by the oversampling latency
+        float s = sub[i];
+        if (latency > 0)
+        {
+            const float delayed = subDelay[(size_t) subDelayPos];
+            subDelay[(size_t) subDelayPos] = s;
+            subDelayPos = (subDelayPos + 1) % latency;
+            s = delayed;
+        }
+
+        float x = main[i] + s;
+
+        // DC blocker (asymmetric saturation creates DC)
+        const float y = x - dcX + dcCoef * dcY;
+        dcX = x;
+        dcY = y;
+        x = y;
+
+        if (lowCutChoice > 0)
+            x = lowCut.processSample (x);
+
+        x *= gainSmooth.next();
+
+        if (clip)
+        {
+            // soft knee clipper: linear up to -2 dB, smooth ceiling at 0 dBFS
+            constexpr float t = 0.8f;
+            const float a = std::abs (x);
+            if (a > t)
+                x = std::copysign (t + (1.0f - t) * std::tanh ((a - t) / (1.0f - t)), x);
+        }
+
+        main[i] = x;
+        peak = std::max (peak, std::abs (x));
+    }
+
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        buffer.copyFrom (ch, 0, main, numSamples);
+
+    scope.push (main, numSamples);
+    outputPeak = std::max (peak, outputPeak.load() * 0.9f);
+}
+
+//==============================================================================
+int BassurdaProcessor::getNumPrograms()
+{
+    return (int) getFactoryPresets().size();
+}
+
+void BassurdaProcessor::setCurrentProgram (int index)
+{
+    const auto& presets = getFactoryPresets();
+    if (! juce::isPositiveAndBelow (index, (int) presets.size()))
+        return;
+
+    currentProgram = index;
+    applyPreset (apvts, presets[(size_t) index]);
+}
+
+const juce::String BassurdaProcessor::getProgramName (int index)
+{
+    const auto& presets = getFactoryPresets();
+    return juce::isPositiveAndBelow (index, (int) presets.size()) ? presets[(size_t) index].name : juce::String();
+}
+
+void BassurdaProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    auto state = apvts.copyState();
+    state.setProperty ("program", currentProgram, nullptr);
+    if (auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void BassurdaProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+    {
+        if (xml->hasTagName (apvts.state.getType()))
+        {
+            auto tree = juce::ValueTree::fromXml (*xml);
+            currentProgram = tree.getProperty ("program", 0);
+            apvts.replaceState (tree);
+        }
+    }
+}
+
+juce::AudioProcessorEditor* BassurdaProcessor::createEditor()
+{
+    return new BassurdaEditor (*this);
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new BassurdaProcessor();
+}
