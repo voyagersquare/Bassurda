@@ -156,7 +156,12 @@ public:
     bool loadSample (const juce::File& file, bool autoTune = true);
     void clearSample();
     const bdsp::SampleData* getSampleForDisplay() const { return sampleData.get(); }
-    juce::String getSampleName() const { return sampleFile.getFileNameWithoutExtension(); }
+    juce::String getSampleName() const;
+    bool isFactorySample() const { return factorySample.isNotEmpty(); }
+
+    // samples recorded for Bassurda, embedded in the plugin
+    static juce::StringArray getFactorySampleNames();
+    bool loadFactorySample (const juce::String& resourceName, bool autoTune = true);
     std::atomic<int> sampleChangeCounter { 0 };
 
     // ---- MIDI learn --------------------------------------------------------
@@ -184,6 +189,7 @@ private:
     int  paramIndex (const juce::String& id) const;
     juce::ValueTree createStateTree (bool includeMidiMap);
     static juce::File copyIntoSampleFolder (const juce::File& file);
+    bool loadFromReader (juce::AudioFormatReader* reader, bool autoTune);
     void restoreStateTree (const juce::ValueTree& tree, bool includeMidiMap);
 
     struct Raw;
@@ -195,6 +201,7 @@ private:
     // sample (swapped on the message thread under the lock)
     std::unique_ptr<bdsp::SampleData> sampleData;
     juce::File sampleFile;
+    juce::String factorySample;     // embedded resource name, if the sample is a factory one
     juce::SpinLock sampleLock;
     juce::AudioFormatManager formatManager;
 

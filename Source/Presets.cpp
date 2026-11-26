@@ -19,6 +19,20 @@ namespace
     }
 }
 
+namespace
+{
+    // Sample-based patch: the sample layer plays the recorded bass, the
+    // oscillators are off, the filter is open and the sub is quiet.
+    Values liveBass (Values extra)
+    {
+        Values v { { smpOn, 1 }, { smpLevel, 1.0f }, { osc1On, 0 }, { subLevel, 0.0f }, { subOct, 0 },
+                   { fltCutoff, 20000.0f }, { fltReso, 0.0f }, { fltEnv, 0.0f }, { fltKey, 0.0f },
+                   { velocity, 0.2f } };
+        v.insert (v.end(), extra.begin(), extra.end());
+        return v;
+    }
+}
+
 const std::vector<FactoryPreset>& getFactoryPresets()
 {
     static const std::vector<FactoryPreset> presets
@@ -128,6 +142,82 @@ const std::vector<FactoryPreset>& getFactoryPresets()
             { aAtk, 2.0f }, { aDec, 1200.0f }, { aSus, 0.9f }, { aRel, 250.0f },
             { glideMode, 2 }, { glideTime, 160.0f },
             { satType, 0 }, { satDrive, 0.4f }, { satBand, 1 }, { satXover, 140.0f } } },
+
+        // ================= live bass (recorded bass guitar, C1) ==============
+        // The sample layer plays the recording; the synth adds a clean sub,
+        // glide, punch and saturation for small speakers.
+        { "Live Bass 808", liveBass ({
+            { subLevel, 0.45f }, { subClean, 1 },
+            { aAtk, 0.5f }, { aDec, 4000.0f }, { aSus, 0.8f }, { aRel, 350.0f },
+            { glideMode, 1 }, { glideTime, 70.0f },
+            { satType, 0 }, { satDrive, 0.45f }, { satBand, 1 }, { satXover, 110.0f }, { satTone, 7000.0f } }),
+          "Live_Bass_1_flac" },
+
+        { "Live Bass Slide", liveBass ({
+            { subLevel, 0.4f }, { subClean, 1 },
+            { aAtk, 0.5f }, { aDec, 4000.0f }, { aSus, 0.85f }, { aRel, 400.0f },
+            { glideMode, 2 }, { glideTime, 160.0f }, { glideCurve, 1 },
+            { satType, 1 }, { satDrive, 0.4f }, { satTone, 6000.0f } }),
+          "Live_Bass_2_flac" },
+
+        { "Live Bass Drill", liveBass ({
+            { subLevel, 0.35f }, { subClean, 1 },
+            { pitchAmt, 3.0f }, { pitchDecay, 20.0f }, { smpPenv, 1 },
+            { aAtk, 0.3f }, { aDec, 3500.0f }, { aSus, 0.8f }, { aRel, 220.0f },
+            { glideMode, 2 }, { glideTime, 90.0f }, { glideCurve, 0 },
+            { satType, 3 }, { satDrive, 0.35f }, { satBand, 1 }, { satXover, 120.0f }, { satTone, 6000.0f },
+            { clickLevel, 0.06f } }),
+          "Live_Bass_3_flac" },
+
+        { "Live Bass Grit", liveBass ({
+            { aAtk, 0.3f }, { aDec, 3000.0f }, { aSus, 0.75f }, { aRel, 300.0f },
+            { glideMode, 1 }, { glideTime, 80.0f },
+            { satType, 2 }, { satDrive, 0.7f }, { satTone, 4500.0f }, { outGain, -2.0f } }),
+          "Live_Bass_4_flac" },
+
+        { "Live Bass Pluck", liveBass ({
+            { fltType, 1 }, { fltCutoff, 1200.0f }, { fltEnv, 0.3f }, { fDec, 250.0f }, { fSus, 0.2f },
+            { aAtk, 0.3f }, { aDec, 700.0f }, { aSus, 0.0f }, { aRel, 150.0f },
+            { envMode, 0 }, { glideMode, 0 }, { velocity, 0.5f },
+            { satType, 0 }, { satDrive, 0.25f }, { outGain, 0.0f } }),
+          "Live_Bass_5_flac" },
+
+        { "Live Bass + Sub", liveBass ({
+            { smpLevel, 0.7f }, { subLevel, 0.8f }, { subClean, 1 },
+            { fltType, 1 }, { fltCutoff, 400.0f }, { fltReso, 0.1f },
+            { aAtk, 0.5f }, { aDec, 4000.0f }, { aSus, 0.9f }, { aRel, 300.0f },
+            { glideMode, 1 }, { glideTime, 60.0f },
+            { satType, 0 }, { satDrive, 0.3f }, { satBand, 1 }, { satXover, 100.0f } }),
+          "Live_Bass_1_flac" },
+
+        { "Live Bass Phonk", liveBass ({
+            { aAtk, 0.3f }, { aDec, 2500.0f }, { aSus, 0.6f }, { aRel, 250.0f },
+            { glideMode, 2 }, { glideTime, 100.0f },
+            { satType, 1 }, { satDrive, 0.65f }, { satTone, 3000.0f }, { driftAmount, 0.3f }, { outGain, 0.0f } }),
+          "Live_Bass_4_flac" },
+
+        { "Live Bass Wide Reese", liveBass ({
+            { osc2On, 1 }, { osc2Wave, 2.0f }, { osc2Level, 0.25f }, { osc2Voices, 5 }, { osc2Detune, 0.4f },
+            { fltType, 1 }, { fltCutoff, 800.0f }, { fltReso, 0.15f },
+            { aAtk, 1.0f }, { aDec, 4000.0f }, { aSus, 0.85f }, { aRel, 300.0f },
+            { glideMode, 2 }, { glideTime, 140.0f },
+            { satType, 0 }, { satDrive, 0.35f }, { satBand, 1 }, { satXover, 130.0f }, { width, 0.45f } }),
+          "Live_Bass_2_flac" },
+
+        { "Live Bass Boom Bap", liveBass ({
+            { fltType, 0 }, { fltCutoff, 700.0f }, { fltEnv, 0.15f },
+            { aAtk, 1.0f }, { aDec, 1200.0f }, { aSus, 0.4f }, { aRel, 200.0f },
+            { envMode, 0 }, { glideMode, 0 }, { velocity, 0.6f }, { driftAmount, 0.2f },
+            { satType, 1 }, { satDrive, 0.3f }, { satTone, 4000.0f }, { outGain, 1.5f } }),
+          "Live_Bass_5_flac" },
+
+        { "Live Bass Rage", liveBass ({
+            { osc1On, 1 }, { osc1Wave, 3.0f }, { osc1Oct, 1 }, { osc1Level, 0.2f },
+            { fltType, 1 }, { fltCutoff, 2500.0f },
+            { aAtk, 0.3f }, { aDec, 3000.0f }, { aSus, 0.7f }, { aRel, 300.0f },
+            { glideMode, 2 }, { glideTime, 120.0f },
+            { satType, 2 }, { satDrive, 0.8f }, { satTone, 5000.0f }, { outGain, -3.0f } }),
+          "Live_Bass_3_flac" },
 
         // ================= sub / phone friendly ==============================
         { "Clean Sub",
@@ -247,11 +337,11 @@ void applyPreset (juce::AudioProcessorValueTreeState& apvts, const FactoryPreset
     {
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
         {
-            // Kick-duck settings belong to the mix and the sample tuning to the
+            // Kick-duck settings belong to the mix and the root/tune to the
             // loaded sample, so presets leave them alone (the sample layer
             // itself is switched off unless the preset turns it on).
             const auto& id = rp->paramID;
-            if (id.startsWith ("duck_") || (id.startsWith ("smp_") && id != ParamID::smpOn))
+            if (id.startsWith ("duck_") || id == ParamID::smpRoot || id == ParamID::smpTune)
                 continue;
             rp->setValueNotifyingHost (rp->getDefaultValue());
         }

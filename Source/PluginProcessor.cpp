@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include "Presets.h"
 #include "DSP/Saturator.h"
+#include "BassurdaSamples.h"
 
 using namespace ParamID;
 
@@ -499,6 +500,8 @@ void BassurdaProcessor::setCurrentProgram (int index)
 
     currentProgram = index;
     applyPreset (apvts, presets[(size_t) index]);
+    if (presets[(size_t) index].sample.isNotEmpty())
+        loadFactorySample (presets[(size_t) index].sample, true);   // also sets root, tune and ON
     currentPresetName = presets[(size_t) index].name;
     ++presetChangeCounter;
 }
@@ -587,6 +590,50 @@ bool BassurdaProcessor::loadSample (const juce::File& file, bool autoTune)
 {
     const auto source = copyIntoSampleFolder (file);
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (source));
+    if (! loadFromReader (reader.get(), autoTune))
+        return false;
+
+    sampleFile = source;
+    factorySample = {};
+    ++sampleChangeCounter;
+    return true;
+}
+
+juce::StringArray BassurdaProcessor::getFactorySampleNames()
+{
+    juce::StringArray names;
+    for (int i = 0; i < BassurdaSamples::namedResourceListSize; ++i)
+        names.add (BassurdaSamples::namedResourceList[i]);
+    return names;
+}
+
+bool BassurdaProcessor::loadFactorySample (const juce::String& resourceName, bool autoTune)
+{
+    int size = 0;
+    const char* data = BassurdaSamples::getNamedResource (resourceName.toRawUTF8(), size);
+    if (data == nullptr || size <= 0)
+        return false;
+
+    std::unique_ptr<juce::AudioFormatReader> reader (
+        formatManager.createReaderFor (std::make_unique<juce::MemoryInputStream> (data, (size_t) size, false)));
+    if (! loadFromReader (reader.get(), autoTune))
+        return false;
+
+    sampleFile = juce::File();
+    factorySample = resourceName;
+    ++sampleChangeCounter;
+    return true;
+}
+
+juce::String BassurdaProcessor::getSampleName() const
+{
+    if (factorySample.isNotEmpty())   // "Live_Bass_1_flac" -> "Live Bass 1"
+        return factorySample.upToLastOccurrenceOf ("_", false, false).replaceCharacter ('_', ' ');
+    return sampleFile.getFileNameWithoutExtension();
+}
+
+bool BassurdaProcessor::loadFromReader (juce::AudioFormatReader* reader, bool autoTune)
+{
     if (reader == nullptr || reader->lengthInSamples <= 0)
         return false;
 
@@ -633,8 +680,6 @@ bool BassurdaProcessor::loadSample (const juce::File& file, bool autoTune)
         old = std::move (sampleData);
         sampleData = std::move (data);
     }
-    sampleFile = source;
-    ++sampleChangeCounter;
     return true;
 }
 
@@ -646,6 +691,7 @@ void BassurdaProcessor::clearSample()
         old = std::move (sampleData);
     }
     sampleFile = juce::File();
+    factorySample = {};
     ++sampleChangeCounter;
 }
 
@@ -696,7 +742,8 @@ juce::ValueTree BassurdaProcessor::createStateTree (bool includeMidiMap)
     auto state = apvts.copyState();
     state.setProperty ("program", currentProgram, nullptr);
     state.setProperty ("presetName", currentPresetName, nullptr);
-    state.setProperty ("samplePath", sampleFile.getFullPathName(), nullptr);
+    state.setProperty ("samplePath", factorySample.isNotEmpty() ? "factory:" + factorySample
+                                                                : sampleFile.getFullPathName(), nullptr);
 
     if (includeMidiMap)
     {
@@ -725,9 +772,16 @@ void BassurdaProcessor::restoreStateTree (const juce::ValueTree& tree, bool incl
     // the preset may come from another computer: look for the sample by name
     // in this computer's Bassurda sample folder
     if (path.isNotEmpty() && ! file.existsAsFile())
-        file = getUserSampleFolder().getChildFile (juce::File::createFileWithoutCheckingPath (path).getFileName());
+        file = getUserSampleFolder().getChildFile (path.fromLastOccurrenceOf ("\\", false, false)
+                                                       .fromLastOccurrenceOf ("/", false, false));
 
-    if (path.isEmpty())
+    if (path.startsWith ("factory:"))
+    {
+        const auto name = path.fromFirstOccurrenceOf ("factory:", false, false);
+        if (name != factorySample && ! loadFactorySample (name, false))
+            clearSample();
+    }
+    else if (path.isEmpty())
         clearSample();
     else if (file.existsAsFile() && file != sampleFile)
         loadSample (file, false);

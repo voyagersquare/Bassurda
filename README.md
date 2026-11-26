@@ -32,20 +32,24 @@ Bassurda je napravljen da bas zvuči masivno na klupskom razglasu, a i dalje jas
 | **Stereo širina** | WIDTH širi samo gornje harmonike, sve ispod MONO < (60–500 Hz) ostaje u sredini. Potpuno mono-kompatibilno: u mono zbroju se poništi | Širok zvuk u slušalicama, a sub čvrst u klubu |
 | **Prikazi** | LCD ekrani: valni oblici, ovojnice uživo, frekvencijski odziv filtera, krivulja saturacije, osciloskop s prikazom note i Hz, metar | Brza vizualna kontrola |
 
-### 30 tvorničkih preseta
+### 40 tvorničkih preseta
 
 | Stil | Preseti |
 |---|---|
 | **Trap 808** | 808 Boom · Trap Slide 808 · Distorted 808 · Long 808 Tail · Short 808 Knock · Hard 808 Grit · Fuzzy Fold 808 · Rage 808 · Memphis Phonk 808 · Plugg Sine · Trap Triangle Sub |
 | **Drill** | Drill Glide · UK Drill Slide · NY Drill Bounce · Dark Drill Reese |
+| **Live bass** (snimljena bas gitara) | Live Bass 808 · Live Bass Slide · Live Bass Drill · Live Bass Grit · Live Bass Pluck · Live Bass + Sub · Live Bass Phonk · Live Bass Wide Reese · Live Bass Boom Bap · Live Bass Rage |
 | **Sub / mobitel** | Clean Sub · Phone Speaker Grit |
 | **Boom bap / lo-fi** | Lo-Fi Boom Bap · Boom Bap Pluck |
 | **West Coast** | G-Funk Moog · West Coast Glide |
 | **Reese / grime** | Reese Pressure · Grime Square |
 | **Ostalo** | Init Bass · Punch Square · Rubber Pluck · Acid Squelch · Wobble Lane · Synthwave Pulse · Deep House Pluck |
 
-Factory preseti ne diraju Kick Duck postavke (one ovise o miksu) ni ugađanje učitanog uzorka;
-sample sloj isključuju (uključiš ga gumbom ON).
+**Live Bass** preseti koriste 5 samplova bas gitare (niski C, 32.7 Hz) koje je snimio autor Bassurde. Ugrađeni su u
+plugin (`Resources/Samples`, FLAC, ukupno 1.8 MB) i dostupni su i u svakom drugom presetu preko **LOAD → Bassurda Samples**.
+
+Factory preseti ne diraju Kick Duck postavke (one ovise o miksu); preseti bez samplea isključuju sample sloj
+(uključiš ga gumbom ON).
 
 ## Tok signala
 
@@ -80,7 +84,7 @@ taj broj, a isti broj samo zamijeni datoteke u postojećem Releaseu. Gornji link
 | Što | Gdje |
 |---|---|
 | Plugin | `C:\Program Files\Common Files\VST3\Bassurda.vst3` |
-| 30 factory preseta | ugrađeni u plugin (nisu datoteke), svatko ih dobije instalacijom |
+| 40 factory preseta i 5 Live Bass samplova | ugrađeni u plugin (nisu datoteke), svatko ih dobije instalacijom |
 | Tvoji preseti | `Dokumenti\Bassurda\Presets\*.bassurda` |
 | Tvoji samplovi | `Dokumenti\Bassurda\Samples` — svaki sample koji ubaciš u plugin kopira se ovdje |
 
@@ -125,6 +129,8 @@ Lokalni JUCE checkout se može koristiti s `-DJUCE_DIR=C:/put/do/JUCE`.
 - vlastiti preseti, MIDI learn i spremanje/učitavanje stanja projekta
 - sample se kopira u Bassurda mapu i preset ga vraća i nakon brisanja originala
 - stereo širina: mono zbroj je identičan, sub ostaje mono (−49 dB side)
+- ugrađeni samplovi: svih 5 se učita s točno prepoznatom notom, preset ih vraća nakon ponovnog otvaranja projekta,
+  a transponirani sample svira točnu visinu
 
 U GitHub buildu plugin dodatno prolazi **pluginval** (strictness 5), standardnu provjeru kompatibilnosti s DAW-ovima.
 

@@ -461,17 +461,36 @@ SampleModule::SampleModule (BassurdaProcessor& p)
                      (Component*) &tune, (Component*) &start })
         addAndMakeVisible (c);
 
-    loadButton.setTooltip ("Load a one-shot (WAV/AIFF/FLAC). The root note is detected automatically.");
+    loadButton.setTooltip ("Pick a built-in Bassurda sample or load your own one-shot (WAV/AIFF/FLAC). The root note is detected automatically.");
     penv.setTooltip ("Apply the pitch envelope to the sample too");
     loadButton.onClick = [this]
     {
-        chooser = std::make_unique<FileChooser> ("Load an 808 / bass sample", File(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
-        chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles,
-                              [this] (const FileChooser& fc)
-                              {
-                                  if (fc.getResult().existsAsFile())
-                                      proc.loadSample (fc.getResult());
-                              });
+        PopupMenu m;
+        m.addSectionHeader ("BASSURDA SAMPLES");
+        const auto names = BassurdaProcessor::getFactorySampleNames();
+        for (int i = 0; i < names.size(); ++i)
+            m.addItem (100 + i, names[i].upToLastOccurrenceOf ("_", false, false).replaceCharacter ('_', ' '));
+        m.addSeparator();
+        m.addItem (1, "Load from file...");
+
+        SafePointer<SampleModule> safe (this);
+        m.showMenuAsync (PopupMenu::Options().withTargetComponent (&loadButton), [safe, names] (int r)
+        {
+            if (safe == nullptr) return;
+            if (r >= 100)
+            {
+                safe->proc.loadFactorySample (names[r - 100]);
+                return;
+            }
+            if (r != 1) return;
+            safe->chooser = std::make_unique<FileChooser> ("Load an 808 / bass sample", File(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+            safe->chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles,
+                                        [safe] (const FileChooser& fc)
+                                        {
+                                            if (safe != nullptr && fc.getResult().existsAsFile())
+                                                safe->proc.loadSample (fc.getResult());
+                                        });
+        });
     };
     clearButton.onClick = [this] { proc.clearSample(); };
 }

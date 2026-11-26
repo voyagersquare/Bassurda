@@ -9,6 +9,8 @@ struct FactoryPreset
     juce::String name;
     // parameter id -> value in real units (choice/int/bool use their index/value)
     std::vector<std::pair<juce::String, float>> values;
+    // optional embedded sample (resource name, e.g. "Live_Bass_1_flac")
+    juce::String sample {};
 };
 
 const std::vector<FactoryPreset>& getFactoryPresets();

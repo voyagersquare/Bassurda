@@ -31,6 +31,15 @@ namespace
 
     struct Event { int sample; int note; bool on; };
 
+    int presetIndex (BassurdaProcessor& p, const String& name)
+    {
+        for (int i = 0; i < p.getNumPrograms(); ++i)
+            if (p.getProgramName (i) == name)
+                return i;
+        jassertfalse;
+        return 0;
+    }
+
     // Renders `length` samples, firing the given note events.
     std::vector<float> render (BassurdaProcessor& p, int length, std::vector<Event> events)
     {
@@ -361,6 +370,49 @@ namespace
         copy.deleteFile();
     }
 
+    void testFactorySamples()
+    {
+        std::cout << "Factory samples (recorded bass guitar)" << std::endl;
+        BassurdaProcessor p;
+        p.prepareToPlay (sr, block);
+        const auto names = BassurdaProcessor::getFactorySampleNames();
+        check (names.size() == 5, String (names.size()) + " samples embedded");
+        for (auto& n : names)
+        {
+            check (p.loadFactorySample (n), n + " loads");
+            const int root = (int) p.apvts.getRawParameterValue (ParamID::smpRoot)->load();
+            const float tune = p.apvts.getRawParameterValue (ParamID::smpTune)->load();
+            // low C string, 32.7 Hz (MIDI 24, "C0" with C3 = middle C)
+            check (root == 24 && std::abs (tune) < 15.0f,
+                   "  root detected as " + MidiMessage::getMidiNoteName (root, true, true, 3) + " "
+                   + String (tune, 1) + " ct (expected C0 = 32.7 Hz)");
+        }
+
+        // a sample preset survives a project save/reload with nothing on disk
+        p.setCurrentProgram (presetIndex (p, "Live Bass Drill"));
+        check (p.getSampleName() == "Live Bass 3", "preset loads its sample (" + p.getSampleName() + ")");
+        MemoryBlock state;
+        p.getStateInformation (state);
+        BassurdaProcessor q;
+        q.prepareToPlay (sr, block);
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        check (q.getSampleName() == "Live Bass 3" && q.isFactorySample(), "project reload restores the built-in sample");
+
+        // played a fifth up it is re-pitched correctly: G0 = 49 Hz (MIDI 31)
+        setParam (q, ParamID::subLevel, 0.0f);
+        setParam (q, ParamID::satMix, 0.0f);
+        setParam (q, ParamID::pitchAmt, 0.0f);
+        setParam (q, ParamID::glideMode, 0);
+        render (q, 4800, {});
+        auto out = render (q, 48000, { { 0, 31, true } });
+        bdsp::SampleData analysed;
+        analysed.sampleRate = sr;
+        analysed.samples = out;
+        analysed.detectPitch();
+        check (std::abs (analysed.detectedNote - 31.0f) < 0.15f,
+               "G0 played, output pitch is MIDI " + String (analysed.detectedNote, 2) + " (expected 31)");
+    }
+
     void testStereoWidth()
     {
         std::cout << "Stereo width" << std::endl;
@@ -368,7 +420,7 @@ namespace
         {
             BassurdaProcessor p;
             p.prepareToPlay (sr, block);
-            p.setCurrentProgram (22);   // Reese Pressure
+            p.setCurrentProgram (presetIndex (p, "Reese Pressure"));
             setParam (p, ParamID::width, w);
             if (subOnly) { setParam (p, ParamID::osc1On, 0.0f); setParam (p, ParamID::osc2On, 0.0f); }
             render (p, 4800, {});
@@ -492,7 +544,7 @@ namespace
         BassurdaProcessor p;
         p.prepareToPlay (sr, block);
         for (int i = 0; i < p.getNumPrograms(); ++i)
-            if (p.getProgramName (i) == "G-Funk Moog")
+            if (p.getProgramName (i) == "Live Bass Wide Reese")
                 p.setCurrentProgram (i);   // uses most sections
         render (p, 12000, { { 0, 36, true } });
 
@@ -525,6 +577,7 @@ int main (int argc, char** argv)
     testKickDuck();
     testMultibandSaturation();
     testSampleOscillator();
+    testFactorySamples();
     testStereoWidth();
     testUserPresetsAndState();
 

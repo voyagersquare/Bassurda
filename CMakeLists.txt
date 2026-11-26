@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Bassurda VERSION 0.2.0 LANGUAGES C CXX)
+project(Bassurda VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +43,18 @@ juce_add_plugin(Bassurda
     PRODUCT_NAME                "Bassurda"
     FORMATS                     ${BASSURDA_FORMATS})
 
+# Factory samples (recorded bass guitar), embedded in the plugin binary
+juce_add_binary_data(BassurdaSamples
+    HEADER_NAME BassurdaSamples.h
+    NAMESPACE   BassurdaSamples
+    SOURCES
+        Resources/Samples/Live_Bass_1.flac
+        Resources/Samples/Live_Bass_2.flac
+        Resources/Samples/Live_Bass_3.flac
+        Resources/Samples/Live_Bass_4.flac
+        Resources/Samples/Live_Bass_5.flac)
+set_target_properties(BassurdaSamples PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 set(BASSURDA_CORE_SOURCES
     Source/Parameters.cpp
     Source/Presets.cpp
@@ -66,6 +78,7 @@ target_compile_definitions(Bassurda PUBLIC
 
 target_link_libraries(Bassurda
     PRIVATE
+        BassurdaSamples
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC
@@ -97,6 +110,7 @@ if(BASSURDA_BUILD_TESTS)
         JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0)
     target_link_libraries(BassurdaTests PRIVATE
+        BassurdaSamples
         juce::juce_audio_utils
         juce::juce_dsp
         juce::juce_recommended_config_flags
