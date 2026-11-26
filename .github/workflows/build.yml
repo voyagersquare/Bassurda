@@ -16,13 +16,13 @@ jobs:
           - name: Windows
             os: windows-latest
           - name: macOS
-            os: macos-14
+            os: macos-latest
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -50,7 +50,7 @@ jobs:
         run: .\build\BassurdaTests_artefacts\Release\BassurdaTests.exe
 
       - name: Upload plugin
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Bassurda-${{ matrix.name }}
           path: |
