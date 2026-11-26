@@ -142,6 +142,7 @@ public:
 
     // ---- user presets (message thread) ------------------------------------
     static juce::File getUserPresetFolder();
+    static juce::File getUserSampleFolder();
     juce::Array<juce::File> getUserPresets() const;
     bool saveUserPreset (const juce::String& name);
     bool loadUserPreset (const juce::File& file);
@@ -149,6 +150,9 @@ public:
     std::atomic<int> presetChangeCounter { 0 };
 
     // ---- sample oscillator (message thread) ---------------------------------
+    // Loads a one-shot. A sample from outside Documents/Bassurda/Samples is
+    // copied there first, so presets and projects keep working even if the
+    // original file is moved or deleted.
     bool loadSample (const juce::File& file, bool autoTune = true);
     void clearSample();
     const bdsp::SampleData* getSampleForDisplay() const { return sampleData.get(); }
@@ -179,6 +183,7 @@ private:
     void scheduleBeatDucks (int numSamples);
     int  paramIndex (const juce::String& id) const;
     juce::ValueTree createStateTree (bool includeMidiMap);
+    static juce::File copyIntoSampleFolder (const juce::File& file);
     void restoreStateTree (const juce::ValueTree& tree, bool includeMidiMap);
 
     struct Raw;
@@ -210,6 +215,11 @@ private:
     float dcX = 0.0f, dcY = 0.0f, dcCoef = 0.999f;
 
     KickDuck duck;
+
+    juce::dsp::LinkwitzRileyFilter<float> widthSplit;
+    std::vector<float> widthDelay, midScratch;
+    int widthDelayPos = 0;
+    bdsp::Smoother widthSmooth;
 
     double sampleRate = 44100.0;
     int currentProgram = 0;

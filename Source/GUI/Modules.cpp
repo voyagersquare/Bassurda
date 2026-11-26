@@ -534,17 +534,21 @@ OutputModule::OutputModule (BassurdaProcessor& p)
     : ModulePanel ("OUTPUT"),
       gain (p.apvts, outGain, "GAIN"),
       lowCut (p.apvts, monoCut, "LOW CUT"),
-      clip (p.apvts, outClip, "SOFT CLIP", C::red)
+      width (p.apvts, ParamID::width, "WIDTH", C::green),
+      monoBelow (p.apvts, ParamID::monoBelow, "MONO <", C::green),
+      clip (p.apvts, outClip, "CLIP", C::red)
 {
-    for (auto* c : { (Component*) &gain, (Component*) &lowCut, (Component*) &clip })
+    for (auto* c : { (Component*) &gain, (Component*) &lowCut, (Component*) &width, (Component*) &monoBelow, (Component*) &clip })
         addAndMakeVisible (c);
+    width.slider.setTooltip ("Stereo width of the upper harmonics. Mono-compatible: it cancels when summed to mono");
+    monoBelow.slider.setTooltip ("Everything below this frequency stays mono (the sub never moves)");
 }
 
 void OutputModule::resized()
 {
+    clip.setBounds (titleBar().removeFromRight (62));
     auto r = content();
-    auto knobs = r.removeFromTop (r.getHeight() - 30);
-    layoutRow (knobs, { &gain, &lowCut });
-    r.removeFromTop (6);
-    clip.setBounds (r.withSizeKeepingCentre (jmin (110, r.getWidth()), 22));
+    auto top = r.removeFromTop (r.getHeight() / 2);
+    layoutRow (top, { &gain, &lowCut });
+    layoutRow (r, { &width, &monoBelow });
 }

@@ -218,6 +218,6 @@ public:
     explicit OutputModule (BassurdaProcessor&);
     void resized() override;
 private:
-    Knob gain, lowCut;
+    Knob gain, lowCut, width, monoBelow;
     LedToggle clip;
 };

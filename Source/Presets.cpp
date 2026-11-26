@@ -120,7 +120,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
             { glideMode, 2 }, { glideTime, 60.0f }, { glideCurve, 0 },
             { satType, 1 }, { satDrive, 0.45f }, { satTone, 6000.0f }, { clickLevel, 0.12f } }) },
 
-        { "Dark Drill Reese", {
+        { "Dark Drill Reese", { { width, 0.40f },
             { osc1Wave, 2.0f }, { osc1Level, 0.35f }, { osc2On, 1 }, { osc2Wave, 2.0f }, { osc2Level, 0.5f },
             { osc2Voices, 7 }, { osc2Detune, 0.5f }, { subLevel, 0.9f }, { subOct, 1 },
             { fltType, 1 }, { fltCutoff, 500.0f }, { fltReso, 0.15f }, { fltEnv, 0.1f }, { fltKey, 0.4f },
@@ -159,7 +159,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // ================= west coast ========================================
         { "G-Funk Moog",
-          { { osc1Wave, 2.6f }, { osc1Level, 0.75f }, { subLevel, 0.6f }, { subOct, 1 },
+          { { width, 0.25f }, { osc1Wave, 2.6f }, { osc1Level, 0.75f }, { subLevel, 0.6f }, { subOct, 1 },
             { fltType, 1 }, { fltCutoff, 420.0f }, { fltReso, 0.35f }, { fltEnv, 0.45f }, { fltKey, 0.6f },
             { fAtk, 4.0f }, { fDec, 380.0f }, { fSus, 0.3f }, { fRel, 200.0f },
             { aAtk, 2.0f }, { aDec, 600.0f }, { aSus, 0.8f }, { aRel, 150.0f },
@@ -168,7 +168,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
             { satType, 1 }, { satDrive, 0.25f }, { driftAmount, 0.3f } } },
 
         { "West Coast Glide",
-          { { osc1Wave, 3.0f }, { osc1Pw, 0.3f }, { osc1Level, 0.6f }, { subLevel, 0.7f }, { subOct, 1 },
+          { { width, 0.30f }, { osc1Wave, 3.0f }, { osc1Pw, 0.3f }, { osc1Level, 0.6f }, { subLevel, 0.7f }, { subOct, 1 },
             { fltType, 1 }, { fltCutoff, 900.0f }, { fltReso, 0.4f }, { fltEnv, 0.25f }, { fltKey, 0.5f },
             { aAtk, 3.0f }, { aDec, 800.0f }, { aSus, 0.85f }, { aRel, 200.0f },
             { glideMode, 2 }, { glideTime, 150.0f }, { glideCurve, 1 },
@@ -177,7 +177,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // ================= reese / wide ======================================
         { "Reese Pressure",
-          { { osc1Wave, 2.0f }, { osc1Level, 0.5f }, { osc2On, 1 }, { osc2Wave, 2.0f }, { osc2Level, 0.6f },
+          { { width, 0.50f }, { osc1Wave, 2.0f }, { osc1Level, 0.5f }, { osc2On, 1 }, { osc2Wave, 2.0f }, { osc2Level, 0.6f },
             { osc2Voices, 5 }, { osc2Detune, 0.35f }, { subLevel, 0.7f }, { subOct, 1 },
             { fltType, 1 }, { fltCutoff, 900.0f }, { fltReso, 0.2f }, { fltEnv, 0.15f }, { fltKey, 0.3f },
             { lfoRate, 0.3f }, { lfoCutoff, 0.2f }, { lfoRetrig, 0 },
@@ -216,14 +216,14 @@ const std::vector<FactoryPreset>& getFactoryPresets()
             { satType, 0 }, { satDrive, 0.3f } } },
 
         { "Wobble Lane",
-          { { osc1Wave, 2.0f }, { osc2On, 1 }, { osc2Wave, 3.0f }, { osc2Oct, -1 }, { osc2Level, 0.4f },
+          { { width, 0.50f }, { osc1Wave, 2.0f }, { osc2On, 1 }, { osc2Wave, 3.0f }, { osc2Oct, -1 }, { osc2Level, 0.4f },
             { subLevel, 0.75f }, { subOct, 1 },
             { fltType, 1 }, { fltCutoff, 300.0f }, { fltReso, 0.45f }, { fltEnv, 0.0f },
             { lfoSync, 1 }, { lfoDiv, 5 }, { lfoShape, 0 }, { lfoCutoff, 0.6f },
             { satType, 0 }, { satDrive, 0.4f } } },
 
         { "Synthwave Pulse",
-          { { osc1Wave, 3.0f }, { osc1Pw, 0.45f }, { osc1Level, 0.6f }, { osc2On, 1 }, { osc2Wave, 2.0f },
+          { { width, 0.45f }, { osc1Wave, 3.0f }, { osc1Pw, 0.45f }, { osc1Level, 0.6f }, { osc2On, 1 }, { osc2Wave, 2.0f },
             { osc2Fine, 8.0f }, { osc2Level, 0.35f }, { subLevel, 0.5f }, { subOct, 1 },
             { fltType, 0 }, { fltCutoff, 1200.0f }, { fltReso, 0.2f }, { fltEnv, 0.3f },
             { fDec, 200.0f }, { fSus, 0.3f },

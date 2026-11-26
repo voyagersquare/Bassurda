@@ -45,7 +45,7 @@ struct BassurdaProcessor::Raw
     BASSURDA_RAW (lfoRetrig_, lfoRetrig)
 
     BASSURDA_RAW (satType_, satType) BASSURDA_RAW (satDrive_, satDrive) BASSURDA_RAW (satTone_, satTone) BASSURDA_RAW (satMix_, satMix)
-    BASSURDA_RAW (outGain_, outGain) BASSURDA_RAW (outClip_, outClip) BASSURDA_RAW (lowCut_, monoCut)
+    BASSURDA_RAW (outGain_, outGain) BASSURDA_RAW (outClip_, outClip) BASSURDA_RAW (lowCut_, monoCut) BASSURDA_RAW (width_, width) BASSURDA_RAW (monoBelow_, monoBelow)
     BASSURDA_RAW (satBand_, satBand) BASSURDA_RAW (satXover_, satXover)
     BASSURDA_RAW (smpOn_, smpOn) BASSURDA_RAW (smpLevel_, smpLevel) BASSURDA_RAW (smpRoot_, smpRoot)
     BASSURDA_RAW (smpTune_, smpTune) BASSURDA_RAW (smpStart_, smpStart) BASSURDA_RAW (smpLoop_, smpLoop)
@@ -122,6 +122,15 @@ void BassurdaProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock
     dcCoef = (float) std::exp (-bdsp::twoPi * 5.0 / sampleRate);
 
     duck.prepare (sampleRate);
+
+    juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
+    widthSplit.setType (juce::dsp::LinkwitzRileyFilterType::highpass);
+    widthSplit.prepare (spec);
+    widthDelay.assign ((size_t) std::max (1, (int) std::lround (sampleRate * 0.0071)), 0.0f);
+    widthDelayPos = 0;
+    widthSmooth.prepare (sampleRate, 30.0f);
+    widthSmooth.snap (toF (raw->width_));
+    midScratch.assign ((size_t) samplesPerBlock, 0.0f);
 }
 
 void BassurdaProcessor::updateEngineParams()
@@ -378,11 +387,27 @@ void BassurdaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         lowCut.reset();
     }
 
-    // ---- sum, clean up, duck, gain, clip -------------------------------------
+    // ---- sum, clean up, duck, gain, width, clip ------------------------------
     gainSmooth.setTarget (juce::Decibels::decibelsToGain (toF (raw->outGain_)));
     const bool clip = toBool (raw->outClip_);
     const bool ducking = toInt (raw->duckMode_) != 0;
+    const bool stereo = buffer.getNumChannels() > 1;
+    widthSmooth.setTarget (stereo ? toF (raw->width_) : 0.0f);
+    widthSplit.setCutoffFrequency (toF (raw->monoBelow_));
+    if ((int) midScratch.size() < numSamples)
+        midScratch.resize ((size_t) numSamples);
+
+    auto softClip = [] (float v)
+    {
+        // soft knee clipper: linear up to -2 dB, smooth ceiling at 0 dBFS
+        constexpr float t = 0.8f;
+        const float a = std::abs (v);
+        return a > t ? std::copysign (t + (1.0f - t) * std::tanh ((a - t) / (1.0f - t)), v) : v;
+    };
+
     float peak = 0.0f, minDuck = 1.0f;
+    float* left  = main;
+    float* right = sub;      // the sub buffer is reused for the right channel
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -416,23 +441,44 @@ void BassurdaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
         x *= gainSmooth.next();
 
+        // Stereo width: a delayed copy of the highs is added to the left and
+        // subtracted from the right. It cancels completely in mono, and
+        // everything below "mono below" stays dead centre.
+        const float high = widthSplit.processSample (0, x);
+        const float delayedHigh = widthDelay[(size_t) widthDelayPos];
+        widthDelay[(size_t) widthDelayPos] = high;
+        widthDelayPos = (widthDelayPos + 1) % (int) widthDelay.size();
+        float side = delayedHigh * widthSmooth.next() * 0.8f;
+
+        // clip the mid only, and let the side use just the headroom left, so
+        // the mono sum is exactly the same as with zero width
         if (clip)
         {
-            // soft knee clipper: linear up to -2 dB, smooth ceiling at 0 dBFS
-            constexpr float t = 0.8f;
-            const float a = std::abs (x);
-            if (a > t)
-                x = std::copysign (t + (1.0f - t) * std::tanh ((a - t) / (1.0f - t)), x);
+            x = softClip (x);
+            const float headroom = std::max (0.0f, 0.999f - std::abs (x));
+            side = juce::jlimit (-headroom, headroom, side);
         }
+        const float l = x + side, r = x - side;
 
-        main[i] = x;
-        peak = std::max (peak, std::abs (x));
+        left[i]  = l;
+        right[i] = r;
+        midScratch[(size_t) i] = 0.5f * (l + r);
+        peak = std::max (peak, std::max (std::abs (l), std::abs (r)));
     }
 
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-        buffer.copyFrom (ch, 0, main, numSamples);
+    if (stereo)
+    {
+        buffer.copyFrom (0, 0, left, numSamples);
+        buffer.copyFrom (1, 0, right, numSamples);
+        for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
+            buffer.clear (ch, 0, numSamples);
+    }
+    else if (buffer.getNumChannels() == 1)
+    {
+        buffer.copyFrom (0, 0, left, numSamples);
+    }
 
-    scope.push (main, numSamples);
+    scope.push (midScratch.data(), numSamples);
     outputPeak = std::max (peak, outputPeak.load() * 0.9f);
     duckGain = minDuck;
 }
@@ -470,6 +516,28 @@ juce::File BassurdaProcessor::getUserPresetFolder()
 {
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
                .getChildFile ("Bassurda").getChildFile ("Presets");
+}
+
+juce::File BassurdaProcessor::getUserSampleFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+               .getChildFile ("Bassurda").getChildFile ("Samples");
+}
+
+juce::File BassurdaProcessor::copyIntoSampleFolder (const juce::File& file)
+{
+    auto folder = getUserSampleFolder();
+    if (file.isAChildOf (folder) || ! folder.createDirectory())
+        return file;
+
+    // reuse an identical copy; never overwrite a different file of the same name
+    auto target = folder.getChildFile (file.getFileName());
+    if (target.existsAsFile() && target.getSize() == file.getSize() && target.hasIdenticalContentTo (file))
+        return target;
+    if (target.existsAsFile())
+        target = folder.getNonexistentChildFile (file.getFileNameWithoutExtension(), file.getFileExtension(), false);
+
+    return file.copyFileTo (target) ? target : file;
 }
 
 juce::Array<juce::File> BassurdaProcessor::getUserPresets() const
@@ -517,7 +585,8 @@ bool BassurdaProcessor::loadUserPreset (const juce::File& file)
 //==============================================================================
 bool BassurdaProcessor::loadSample (const juce::File& file, bool autoTune)
 {
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
+    const auto source = copyIntoSampleFolder (file);
+    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (source));
     if (reader == nullptr || reader->lengthInSamples <= 0)
         return false;
 
@@ -564,7 +633,7 @@ bool BassurdaProcessor::loadSample (const juce::File& file, bool autoTune)
         old = std::move (sampleData);
         sampleData = std::move (data);
     }
-    sampleFile = file;
+    sampleFile = source;
     ++sampleChangeCounter;
     return true;
 }
@@ -651,11 +720,19 @@ void BassurdaProcessor::restoreStateTree (const juce::ValueTree& tree, bool incl
     currentProgram    = tree.getProperty ("program", -1);
     currentPresetName = tree.getProperty ("presetName", "Init Bass").toString();
 
-    const juce::File file (tree.getProperty ("samplePath").toString());
-    if (tree.getProperty ("samplePath").toString().isEmpty())
+    const auto path = tree.getProperty ("samplePath").toString();
+    juce::File file (juce::File::isAbsolutePath (path) ? path : juce::String());
+    // the preset may come from another computer: look for the sample by name
+    // in this computer's Bassurda sample folder
+    if (path.isNotEmpty() && ! file.existsAsFile())
+        file = getUserSampleFolder().getChildFile (juce::File::createFileWithoutCheckingPath (path).getFileName());
+
+    if (path.isEmpty())
         clearSample();
-    else if (file != sampleFile && file.existsAsFile())
+    else if (file.existsAsFile() && file != sampleFile)
         loadSample (file, false);
+    else if (! file.existsAsFile())
+        clearSample();   // missing sample: better silence than the wrong sound
 
     if (includeMidiMap)
     {

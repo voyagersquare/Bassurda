@@ -107,6 +107,8 @@ namespace ParamID
     inline constexpr const char* outGain   = "out_gain";
     inline constexpr const char* outClip   = "out_clip";
     inline constexpr const char* monoCut   = "low_cut";      // DC / infrasonic high-pass
+    inline constexpr const char* width     = "width";        // stereo width of the highs
+    inline constexpr const char* monoBelow = "mono_below";   // everything below stays mono
 }
 
 namespace ParamChoices

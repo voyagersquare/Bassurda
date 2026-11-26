@@ -29,6 +29,7 @@ Bassurda je napravljen da bas zvuči masivno na klupskom razglasu, a i dalje jas
 | **LFO** | Sine/Tri/Saw/Square/S&H, slobodno ili sync na tempo (1/32 … 4/1, triole, točkaste), na cutoff i pitch | Wobble, vibrato |
 | **Analog drift** | Spori nasumični pomak visine po oscilatoru | Manje "digitalan" zvuk |
 | **Output** | Gain, Low Cut (20/30/40 Hz), DC blocker, soft clipper | Čist, siguran izlaz |
+| **Stereo širina** | WIDTH širi samo gornje harmonike, sve ispod MONO < (60–500 Hz) ostaje u sredini. Potpuno mono-kompatibilno: u mono zbroju se poništi | Širok zvuk u slušalicama, a sub čvrst u klubu |
 | **Prikazi** | LCD ekrani: valni oblici, ovojnice uživo, frekvencijski odziv filtera, krivulja saturacije, osciloskop s prikazom note i Hz, metar | Brza vizualna kontrola |
 
 ### 30 tvorničkih preseta
@@ -61,13 +62,35 @@ Nazivi nota koriste konvenciju **C3 = srednji C (MIDI 60)**, kao Ableton i Logic
 
 ## Skidanje
 
-**[⬇ Bassurda-Windows-VST3.zip (najnovija verzija)](https://github.com/voyagersquare/Bassurda/releases/latest/download/Bassurda-Windows-VST3.zip)**
+**[⬇ Bassurda-Windows-Setup.exe (installer, najnovija verzija)](https://github.com/voyagersquare/Bassurda/releases/latest/download/Bassurda-Windows-Setup.exe)**
+· [zip bez installera](https://github.com/voyagersquare/Bassurda/releases/latest/download/Bassurda-Windows-VST3.zip)
+· [sve verzije](https://github.com/voyagersquare/Bassurda/releases)
 
-Raspakiraj zip i kopiraj mapu `Bassurda.vst3` u `C:\Program Files\Common Files\VST3`, pa u DAW-u ponovno skeniraj pluginove.
+Zatvori DAW, pokreni installer, pa u DAW-u ponovno skeniraj pluginove. Installer nije digitalno potpisan, pa Windows
+SmartScreen može pitati "Windows protected your PC" → **More info → Run anyway**.
 
-Svaki push na `main` (i na `feature/bass-engine`) builda plugin, pokrene testove i objavi ga kao GitHub Release.
-Verzija se uzima iz `project(Bassurda VERSION …)` u `CMakeLists.txt`: za novu verziju povećaj taj broj, a isti broj
-samo zamijeni zip u postojećem Releaseu. Gornji link uvijek vodi na najnoviju verziju.
+Bez installera: raspakiraj zip i kopiraj mapu `Bassurda.vst3` u `C:\Program Files\Common Files\VST3`.
+
+Svaki push na `main` (i na `feature/bass-engine`) builda plugin, pokrene testove i pluginval, napravi installer i objavi
+ih kao GitHub Release. Verzija se uzima iz `project(Bassurda VERSION …)` u `CMakeLists.txt`: za novu verziju povećaj
+taj broj, a isti broj samo zamijeni datoteke u postojećem Releaseu. Gornji linkovi uvijek vode na najnoviju verziju.
+
+## Gdje su preseti i samplovi
+
+| Što | Gdje |
+|---|---|
+| Plugin | `C:\Program Files\Common Files\VST3\Bassurda.vst3` |
+| 30 factory preseta | ugrađeni u plugin (nisu datoteke), svatko ih dobije instalacijom |
+| Tvoji preseti | `Dokumenti\Bassurda\Presets\*.bassurda` |
+| Tvoji samplovi | `Dokumenti\Bassurda\Samples` — svaki sample koji ubaciš u plugin kopira se ovdje |
+
+Preset sprema i sample koji koristi. Kad ubaciš sample, plugin ga kopira u `Dokumenti\Bassurda\Samples`, pa preset
+radi i ako originalnu datoteku obrišeš ili premjestiš. Na drugom računalu preset pronalazi sample po imenu datoteke
+u njegovoj `Dokumenti\Bassurda\Samples` mapi.
+
+**Dijeljenje svojih preseta s installerom:** kopiraj presete u `installer/Content/Presets`, a njihove samplove u
+`installer/Content/Samples`, pa pushaj. Installer ih kopira u `Dokumenti\Bassurda` kod onoga tko instalira
+(postojeće datoteke ne prepisuje, deinstalacija ih ne briše). Vidi `installer/Content/README.txt`.
 
 ## Build na svom računalu
 
@@ -100,6 +123,10 @@ Lokalni JUCE checkout se može koristiti s `-DJUCE_DIR=C:/put/do/JUCE`.
 - HIGHS saturacija ostavlja 55 Hz sub čistim
 - sample oscilator: prepoznaje root notu i transponira uzorak točno na sviranu notu
 - vlastiti preseti, MIDI learn i spremanje/učitavanje stanja projekta
+- sample se kopira u Bassurda mapu i preset ga vraća i nakon brisanja originala
+- stereo širina: mono zbroj je identičan, sub ostaje mono (−49 dB side)
+
+U GitHub buildu plugin dodatno prolazi **pluginval** (strictness 5), standardnu provjeru kompatibilnosti s DAW-ovima.
 
 ```bash
 ./build/BassurdaTests_artefacts/Release/BassurdaTests --render demos --snapshot gui.png

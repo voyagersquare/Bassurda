@@ -210,6 +210,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
                                            .withStringFromValueFunction ([] (float v, int) { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; })));
     layout.add (std::make_unique<APB> (pid (outClip), "Soft Clipper", true));
     layout.add (std::make_unique<APC> (pid (monoCut), "Low Cut", ParamChoices::lowCut, 1));
+    layout.add (std::make_unique<APF> (pid (width), "Stereo Width", Range { 0.0f, 1.0f }, 0.0f, percentAttr()));
+    Range monoRange { 60.0f, 500.0f };
+    monoRange.setSkewForCentre (160.0f);
+    layout.add (std::make_unique<APF> (pid (monoBelow), "Mono Below", monoRange, 150.0f, hzAttr()));
 
     return layout;
 }

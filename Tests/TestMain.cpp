@@ -344,7 +344,68 @@ namespace
                 xs.push_back (i - 1 + out[(size_t) i - 1] / (out[(size_t) i - 1] - out[(size_t) i]));
         const double f = xs.size() > 2 ? sr * (double) (xs.size() - 1) / (xs.back() - xs.front()) : 0.0;
         check (std::abs (f - 110.0) < 1.5, "sample is re-pitched to the played note: " + String (f, 2) + " Hz (expected 110)");
+
+        // the sample is copied into Documents/Bassurda/Samples, so a preset
+        // keeps working after the original file is deleted
+        auto copy = BassurdaProcessor::getUserSampleFolder().getChildFile (file.getFileName());
+        check (copy.existsAsFile(), "sample copied to " + copy.getFullPathName());
+        const String presetName = "__bassurda_sample_preset__";
+        p.saveUserPreset (presetName);
         file.deleteFile();
+        BassurdaProcessor fresh;
+        fresh.prepareToPlay (sr, block);
+        fresh.loadUserPreset (BassurdaProcessor::getUserPresetFolder().getChildFile (presetName + ".bassurda"));
+        check (fresh.getSampleForDisplay() != nullptr && fresh.getSampleName() == "bassurda_test_808",
+               "user preset brings its sample back after the original WAV was deleted");
+        BassurdaProcessor::getUserPresetFolder().getChildFile (presetName + ".bassurda").deleteFile();
+        copy.deleteFile();
+    }
+
+    void testStereoWidth()
+    {
+        std::cout << "Stereo width" << std::endl;
+        auto run = [] (float w, int note, bool subOnly)
+        {
+            BassurdaProcessor p;
+            p.prepareToPlay (sr, block);
+            p.setCurrentProgram (22);   // Reese Pressure
+            setParam (p, ParamID::width, w);
+            if (subOnly) { setParam (p, ParamID::osc1On, 0.0f); setParam (p, ParamID::osc2On, 0.0f); }
+            render (p, 4800, {});
+            AudioBuffer<float> out (2, 24000);
+            for (int pos = 0; pos < 24000; pos += block)
+            {
+                AudioBuffer<float> view (out.getArrayOfWritePointers(), 2, pos, std::min (block, 24000 - pos));
+                view.clear();
+                MidiBuffer midi;
+                if (pos == 0) midi.addEvent (MidiMessage::noteOn (1, note, (uint8) 100), 0);
+                p.processBlock (view, midi);
+            }
+            return out;
+        };
+
+        auto narrow = run (0.0f, 36, false), wide = run (1.0f, 36, false);
+        float sideRms = 0.0f, monoDiff = 0.0f;
+        for (int i = 0; i < 24000; ++i)
+        {
+            const float l = wide.getSample (0, i), r = wide.getSample (1, i);
+            sideRms += (l - r) * (l - r);
+            monoDiff = std::max (monoDiff, std::abs (0.5f * (l + r) - narrow.getSample (0, i)));
+        }
+        sideRms = std::sqrt (sideRms / 24000.0f);
+        check (sideRms > 0.02f, "width creates a stereo difference (side RMS " + String (sideRms, 3) + ")");
+        check (monoDiff < 0.02f, "mono sum is unchanged (max diff " + String (monoDiff, 4) + ")");
+
+        auto sub = run (1.0f, 36, true);
+        float subSide = 0.0f, subMid = 0.0f;
+        for (int i = 4800; i < 24000; ++i)
+        {
+            const float l = sub.getSample (0, i), r = sub.getSample (1, i);
+            subSide = std::max (subSide, std::abs (l - r));
+            subMid  = std::max (subMid, std::abs (l + r) * 0.5f);
+        }
+        check (subSide < subMid * 0.03f, "sub stays mono at full width (side/mid "
+                                           + String (Decibels::gainToDecibels (subSide / subMid), 1) + " dB)");
     }
 
     void testUserPresetsAndState()
@@ -464,6 +525,7 @@ int main (int argc, char** argv)
     testKickDuck();
     testMultibandSaturation();
     testSampleOscillator();
+    testStereoWidth();
     testUserPresetsAndState();
 
     for (int i = 1; i + 1 < argc; ++i)
