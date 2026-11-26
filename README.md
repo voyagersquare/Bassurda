@@ -65,8 +65,9 @@ Nazivi nota koriste konvenciju **C3 = srednji C (MIDI 60)**, kao Ableton i Logic
 
 Raspakiraj zip i kopiraj mapu `Bassurda.vst3` u `C:\Program Files\Common Files\VST3`, pa u DAW-u ponovno skeniraj pluginove.
 
-Nova verzija se objavljuje tagom: `git tag v0.2.0` pa `git push origin v0.2.0`. GitHub Actions tada builda plugin,
-pokrene testove i objavi Release; gornji link uvijek vodi na najnoviju verziju.
+Svaki push na `main` (i na `feature/bass-engine`) builda plugin, pokrene testove i objavi ga kao GitHub Release.
+Verzija se uzima iz `project(Bassurda VERSION …)` u `CMakeLists.txt`: za novu verziju povećaj taj broj, a isti broj
+samo zamijeni zip u postojećem Releaseu. Gornji link uvijek vodi na najnoviju verziju.
 
 ## Build na svom računalu
 
